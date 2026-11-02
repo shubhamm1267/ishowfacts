@@ -1,0 +1,66 @@
+{
+  "topic": "Banana",
+  "headlineHi": "केला बेरी है… स्ट्रॉबेरी नहीं?",
+  "voiceAccent": "hi-IN-ayush",
+  "voiceStyle": "energetic",
+  "pitch": 1.19,
+  "tempo": 1.13,
+  "fps": 24,
+  "seed": 781966,
+  "editorialReview": "Fresh six-beat Hindi twist with university botanical verification. Rejected an unrelated Japanese banknote ('banana money'), banana virus diagram and weak unlicensed candidate. Added independently checked public-domain Fragaria vesca strawberry close-up and only real banana photos, never generic fake assets. Top Hindi story headline, per-beat Hindi titles, animated contrast, botanical proof, small comic reaction and real Freesound cues.",
+  "sources": [
+    { "name": "Purdue Arboretum — Botanical berry definition", "url": "https://www.arboretum.purdue.edu/explorer/definitions/berry/" },
+    { "name": "Royal Botanic Gardens, Kew — Cavendish banana", "url": "https://www.kew.org/plants/cavendish-banana" },
+    { "name": "University of Oxford — Fragaria fruit morphology", "url": "https://herbaria.plants.ox.ac.uk/bol/plants400/Profiles/ef/Fragaria" },
+    { "name": "NC State University Extension — Strawberry true fruits", "url": "https://content.ces.ncsu.edu/extension-gardener-handbook/3-botany" }
+  ],
+  "scenes": [
+    {
+      "narration": "ये केला… बॉटनी की नज़र में असली बेरी है! जी हाँ, केला एक बेरी है!",
+      "line1": "केला है", "line2": "असली बेरी!", "beatTextHi": "रुको, क्या?!",
+      "visual": "photo", "media": "assets/image_3.jpg", "photoStyle": "clean", "backgroundMode": "kitchen",
+      "layout": "hero", "camera": "push", "motion": "reveal", "theme": "cream", "delivery": "hook",
+      "soundCue": "question", "effects": [{"type":"sparkle","where":"left","at":0.48,"intensity":0.85}]
+    },
+    {
+      "narration": "लेकिन इस स्ट्रॉबेरी का नाम सुनकर मत फंसना… ये वनस्पति विज्ञान वाली बेरी ही नहीं!",
+      "line1": "स्ट्रॉबेरी", "line2": "बेरी नहीं?!", "beatTextHi": "नाम का धोखा!",
+      "visual": "photo", "media": "assets/curated_strawberry.jpg",
+      "credit": {"title":"File:Fragaria vesca close-up 4 cropped.jpg", "source":"https://commons.wikimedia.org/wiki/File%3AFragaria_vesca_close-up_4_cropped.jpg", "license":"Public domain", "author":""},
+      "photoStyle": "poster", "backgroundMode": "paper", "layout": "lower-right", "camera": "pan-left", "motion": "slide-left",
+      "theme": "newsprint", "delivery": "suspense", "soundCue": "pop", "effects": []
+    },
+    {
+      "narration": "असली बेरी एक फूल के एक अंडाशय से बनती है। केला इस नियम पर खरा उतरता है!",
+      "line1": "नियम क्या", "line2": "कहता है?", "beatTextHi": "केला = बेरी",
+      "visual": "diagram", "backgroundMode": "lab", "layout": "comparison", "camera": "static", "motion": "static",
+      "theme": "infographic", "delivery": "explain", "soundCue": "ding", "effects": [],
+      "diagram": {"style":"contrast","heading":"बेरी की परिभाषा","nodes":[
+        {"label":"केला", "detail":"एक अंडाशय से फल"},
+        {"label":"स्ट्रॉबेरी", "detail":"अलग बनी संरचना"}
+      ]}
+    },
+    {
+      "narration": "स्ट्रॉबेरी का लाल हिस्सा फूल का फूला हुआ आधार है; ऊपर के छोटे दाने असल फल हैं!",
+      "line1": "ऊपर के दाने", "line2": "असल फल!", "beatTextHi": "देखो ज़रा!",
+      "visual": "photo", "media": "assets/curated_strawberry.jpg",
+      "credit": {"title":"File:Fragaria vesca close-up 4 cropped.jpg", "source":"https://commons.wikimedia.org/wiki/File%3AFragaria_vesca_close-up_4_cropped.jpg", "license":"Public domain", "author":""},
+      "photoStyle": "frame", "backgroundMode": "lab", "layout": "detail", "camera": "push", "motion": "reveal",
+      "theme": "blueprint", "delivery": "reveal", "soundCue": "ding", "effects": [{"type":"crosshair","where":"subject","at":0.46,"intensity":0.6}]
+    },
+    {
+      "narration": "और जिस पर केला उगता है, वो लकड़ी वाला पेड़ भी नहीं… एक विशाल शाकीय पौधा है!",
+      "line1": "केले का", "line2": "पेड़ नहीं!", "beatTextHi": "विशाल पौधा",
+      "visual": "photo", "media": "assets/image_1.jpg", "photoStyle": "polaroid", "backgroundMode": "forest",
+      "layout": "left", "camera": "pan-right", "motion": "slide-right", "theme": "field-journal",
+      "delivery": "explain", "soundCue": "whoosh", "effects": []
+    },
+    {
+      "narration": "मतलब नाम में बेरी स्ट्रॉबेरी के पास, लेकिन असली बेरी का ताज केले के सिर! ये तो उल्टा खेल हो गया!",
+      "line1": "बेरी का", "line2": "असली राजा!", "beatTextHi": "जीत!",
+      "visual": "photo", "media": "assets/image_3.jpg", "photoStyle": "poster", "backgroundMode": "kitchen",
+      "layout": "right", "camera": "handheld", "motion": "shake", "theme": "dossier", "delivery": "payoff",
+      "soundCue": "pop", "effects": [{"type":"reaction","where":"left","text":"laugh","at":0.56,"intensity":0.9}]
+    }
+  ]
+}

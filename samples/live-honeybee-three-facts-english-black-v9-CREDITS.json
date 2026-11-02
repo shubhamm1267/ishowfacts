@@ -1,0 +1,93 @@
+{
+  "source": [
+    {
+      "name": "Honey bee",
+      "url": "https://en.wikipedia.org/wiki/Honey_bee"
+    },
+    {
+      "name": "Scientific paper on honeycomb geometry",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10465656/"
+    },
+    {
+      "name": "Natural History Museum: how bees make honey",
+      "url": "https://www.nhm.ac.uk/discover/what-is-honey.html"
+    },
+    {
+      "name": "South African National Biodiversity Institute: honey badger",
+      "url": "https://www.sanbi.org/animal-of-the-week/honey-badger/"
+    }
+  ],
+  "images": [
+    {
+      "source": "https://commons.wikimedia.org/wiki/File:Honey_Bees_on_Comb_2.jpg",
+      "license": "CC0",
+      "author": "Shane Harris / Alabama Extension",
+      "title": "Honey Bees on Comb 2"
+    },
+    {
+      "source": "https://commons.wikimedia.org/wiki/File:Honey_Bees_on_Comb.jpg",
+      "license": "Public domain",
+      "author": "Killerlimpet",
+      "title": "Honey Bees on Comb"
+    },
+    {
+      "source": "https://commons.wikimedia.org/wiki/File:Honeybee_apis_mellifera.jpg",
+      "license": "Public domain",
+      "author": "Jon Sullivan",
+      "title": "Honeybee apis mellifera"
+    },
+    {
+      "source": "https://commons.wikimedia.org/wiki/File:Mellivora_capensis.jpg",
+      "license": "CC0",
+      "author": "Nuevocaledonio",
+      "title": "Mellivora capensis honey badger"
+    }
+  ],
+  "soundEffects": [
+    {
+      "id": 742833,
+      "name": "Woosh - Metal tea strainer 4 - slowed down",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "source": "https://freesound.org/s/742833/"
+    },
+    {
+      "id": 465264,
+      "name": "Quick pop",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "source": "https://freesound.org/s/465264/"
+    },
+    {
+      "id": 571511,
+      "name": "Soft-Notifications - Bell - LowDing.mp3",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "source": "https://freesound.org/s/571511/"
+    },
+    {
+      "id": 581382,
+      "name": "Garden Tick.m4a",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "source": "https://freesound.org/s/581382/"
+    },
+    {
+      "id": 648888,
+      "name": "Kick 003.wav",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "source": "https://freesound.org/s/648888/"
+    },
+    {
+      "id": 399093,
+      "name": "8bit Question Mark",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "source": "https://freesound.org/s/399093/"
+    }
+  ],
+  "narrator": {
+    "provider": "Cartesia",
+    "voiceAccent": "en-US",
+    "voiceName": "English (US) · male",
+    "profile": "male",
+    "style": "energetic",
+    "pitchRatio": 1.02
+  },
+  "editorialReview": "Three independently grounded honey bee facts; English-only captions, headline, diagrams and narration; genuine bees, honeycomb and Mellivora capensis species images. Black paper palette. Corrected honey badger larvae diet rather than repeating myth."
+}

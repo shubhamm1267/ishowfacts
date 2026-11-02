@@ -1,0 +1,78 @@
+{
+  "topic": "Sailing stones",
+  "language": "hi",
+  "headlineText": "ये भारी पत्थर अपने आप चलते कैसे हैं?",
+  "headlineHighlight": "ये भारी पत्थर",
+  "voiceAccent": "hi-IN-ayush",
+  "voiceStyle": "energetic",
+  "pitch": 1.17,
+  "tempo": 1.10,
+  "fps": 24,
+  "seed": 8112026,
+  "editorialReview": "Native-Hindi typo repairs; factual check against Wikipedia Sailing stones; switched rejected image searches to documented public-domain Commons photos of the actual tracks. Edgy but non-targeted one-liner.",
+  "sources": [
+    {"name": "Sailing stones — encyclopedia source", "url": "https://en.wikipedia.org/wiki/Sailing_stones"}
+  ],
+  "scenes": [
+    {
+      "narration": "कैलिफ़ोर्निया के रेसेट्रैक प्लाया में, ये भारी पत्थर अपने पीछे लंबी लकीरें छोड़ते हैं। लेकिन चलते कैसे हैं?",
+      "line1": "चलते पत्थर?", "line2": "बिना पैरों!", "beatTextHi": "देखो ये लकीर!",
+      "visual": "photo", "visualRole": "evidence", "subjectEntity": "Sailing stone and visible track at Racetrack Playa",
+      "visualQuery": "Racetrack Playa stone with trail", "media": "assets/review_tracks.jpg",
+      "credit": {"source": "https://commons.wikimedia.org/wiki/File:Racetrack_playa_sliding_stones_moving_rocks.jpg", "license": "Public domain", "author": "Jon Sullivan", "title": "Racetrack playa sliding stones moving rocks"},
+      "layout": "poster", "setting": "plain", "backgroundMode": "photo", "theme": "newsprint",
+      "photoStyle": "poster", "camera": "push", "motion": "reveal", "titleStyle": "kinetic",
+      "delivery": "hook", "action": "identity", "soundCue": "whoosh", "sfxQuery": "dramatic fast paper whoosh", "effects": []
+    },
+    {
+      "narration": "कोई इंसान नहीं धकेलता, कोई जानवर नहीं खींचता। फिर भी ज़मीन पर निशान साफ़ दिखते हैं!",
+      "line1": "कौन खींच रहा?", "line2": "कोई नहीं!", "beatTextHi": "ये असली फ़ोटो है!",
+      "visual": "photo", "visualRole": "evidence", "subjectEntity": "Racetrack Playa sailing stone",
+      "visualQuery": "Racetrack Death Valley sailing stone", "media": "assets/review_moving_rock.jpg",
+      "credit": {"source": "https://commons.wikimedia.org/wiki/File:Racetrack,_Death_Valley_National_Park.jpg", "license": "Public domain", "author": "National Park Service", "title": "Racetrack, Death Valley National Park"},
+      "layout": "left", "setting": "plain", "backgroundMode": "sky", "theme": "dossier",
+      "photoStyle": "polaroid", "camera": "pan-right", "motion": "slide-left", "titleStyle": "bold",
+      "delivery": "suspense", "action": "none", "soundCue": "tick", "effects": []
+    },
+    {
+      "narration": "असली राज़ है सर्दियों के पानी पर तैरती बेहद पतली बर्फ़ की चादर... और हल्की हवा।",
+      "line1": "रहस्य खुला!", "line2": "बर्फ़ और हवा", "beatTextHi": "जादू नहीं!",
+      "visual": "diagram", "visualRole": "diagram", "subjectEntity": "Floating thin ice and wind mechanism",
+      "visualQuery": "sailing stones winter pond ice wind", "diagram": {
+        "heading": "असली राज़", "style": "mechanism", "nodes": [
+          {"label": "पतली बर्फ़", "detail": "पानी पर तैरती"},
+          {"label": "सर्दी", "detail": "जमने का समय"},
+          {"label": "हवा", "detail": "बर्फ़ को धकेले"}
+        ], "links": [{"from": 0, "to": 1}, {"from": 0, "to": 2}]
+      },
+      "layout": "detail", "setting": "plain", "backgroundMode": "lab", "theme": "blueprint",
+      "camera": "pull", "motion": "static", "titleStyle": "kinetic", "delivery": "reveal",
+      "action": "mix", "soundCue": "wind", "effects": []
+    },
+    {
+      "narration": "हवा बर्फ़ की बड़ी चादरों को सरकाती है। वही बर्फ़ पत्थरों को धकेलती है, और पीछे लंबी पटरियाँ बन जाती हैं!",
+      "line1": "हवा का धक्का", "line2": "पत्थर की चाल", "beatTextHi": "अब समझ आया?",
+      "visual": "diagram", "visualRole": "diagram", "subjectEntity": "Sailing stone movement caused by wind and floating thin ice",
+      "visualQuery": "moving thin ice wind push rock", "diagram": {
+        "heading": "बर्फ़ का सफ़र", "style": "pathways", "nodes": [
+          {"label": "पानी", "detail": "सर्दियों का तालाब"},
+          {"label": "बर्फ़", "detail": "पतली तैरती चादर"},
+          {"label": "हवा", "detail": "चादर को धकेले"},
+          {"label": "पत्थर", "detail": "ज़मीन पर लकीर"}
+        ], "links": [{"from": 0, "to": 1}, {"from": 1, "to": 2}, {"from": 2, "to": 3}]
+      },
+      "layout": "split", "setting": "xray", "backgroundMode": "lab", "theme": "blueprint",
+      "camera": "static", "motion": "static", "titleStyle": "typewriter", "delivery": "explain",
+      "action": "signal", "soundCue": "wind", "effects": []
+    },
+    {
+      "narration": "तो पत्थरों में जान नहीं आई, भाई! साला, यहाँ तो हवा और बर्फ़ ही असली खिलाड़ी निकले!",
+      "line1": "जादू नहीं", "line2": "विज्ञान है!", "beatTextHi": "दिमाग़ घूम गया?",
+      "visual": "photo", "visualRole": "subject", "subjectEntity": "Sailing stone on Racetrack Playa dry lake bed",
+      "visualQuery": "sailing stone cracked desert floor", "media": "assets/image_0.jpg",
+      "layout": "right", "setting": "plain", "backgroundMode": "photo", "theme": "field-journal",
+      "photoStyle": "clean", "camera": "pull", "motion": "slide-right", "titleStyle": "bold",
+      "delivery": "payoff", "action": "none", "soundCue": "ding", "effects": []
+    }
+  ]
+}

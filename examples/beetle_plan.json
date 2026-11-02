@@ -1,0 +1,124 @@
+{
+  "meta": {
+    "title": "YT03 Bombardier Beetle — S8 paper-doc port (test of the generic engine)",
+    "voice": "05_Audio/beetle_voice_polished.wav",
+    "words": "06_Edit/transcript/beetle_words.json",
+    "out": "07_Export/YT03_Reel_Bombardier_Beetle_paperdoc.mp4",
+    "duration": 46.6,
+    "header": "BOMBARDIER FILES",
+    "music": {"file": "@sfx/09 Horror Suspense/Suspense Worried Music (ES).mp3", "db": -21, "atempo": 0.9}
+  },
+  "subjects": {
+    "beetle": {"image": "04_Graphics/paper_cutouts/beetle_real_cutout.png", "anchors": {"tail": [555.8, 1427.2]}}
+  },
+  "sounds": [
+    {"t": 32.92, "sfx": "riser", "lead": 2.8, "db": -16},
+    {"t": 32.92, "sfx": "boom", "db": -8},
+    {"t": 44.42, "sfx": "riser", "lead": 2.8, "db": -16},
+    {"t": 44.42, "sfx": "boom", "db": -4}
+  ],
+  "scenes": [
+    {"start": 0.00, "title": ["EK AISA", "KEEDA?"], "red": 2, "scenery": 1, "elements": [
+      {"type": "cutout", "subject": "beetle", "mode": "silhouette", "height": 992, "x": 540, "y": 1240, "at": 0.15, "alpha": 0.92}
+    ]},
+    {"start": 2.00, "title": ["100°C KA", "LAWA"], "red": 2, "scenery": 2, "elements": [
+      {"id": "b", "type": "cutout", "subject": "beetle", "height": 930, "x": 540, "y": 1110},
+      {"type": "spray", "on": "b", "anchor": "tail", "dy": -10, "dir": 90, "at": 1.6, "length": 480, "seed": 2}
+    ]},
+    {"start": 4.70, "title": ["ITNA", "GARAM"], "red": 2, "scenery": 3, "elements": [
+      {"id": "b", "type": "cutout", "subject": "beetle", "height": 713, "x": 330, "y": 1160, "rot": 90, "anim": "none"},
+      {"type": "ant", "x": 1260, "y": 1140, "rot": 90, "anim": "none", "move": {"to": [860, 1140], "at": 0.25, "dur": 0.6}, "until": 1.62},
+      {"type": "ant", "charred": true, "x": 860, "y": 1140, "rot": 90, "anim": "none", "at": 1.62},
+      {"type": "spray", "on": "b", "anchor": "tail", "dir": 0, "at": 1.17, "n": 110, "length": 380, "seed": 5, "sfx_offset": 0.05, "sfx_trim": 1.2},
+      {"type": "smoke", "x": 860, "y": 1080, "at": 1.42}
+    ]},
+    {"start": 7.04, "title": ["YAKEEN", "NAHI?"], "red": 2, "elements": [
+      {"type": "sticky", "text": "?", "x": 540, "y": 1150, "rot": -4}
+    ]},
+    {"start": 8.23, "title": ["BILKUL", "SACH"], "red": 2, "elements": [
+      {"type": "ticket", "strike": "CARTOON", "ok": "REAL", "x": 540, "y": 1080, "rot": -3},
+      {"type": "stamp", "text": "100% SACH", "size": 110, "tilt": -10, "x": 640, "y": 1390, "anim": "slam", "at": 0.62}
+    ]},
+    {"start": 9.49, "title": ["AAJ BHI", "ZINDA"], "red": 2, "scenery": 4, "elements": [
+      {"type": "calendar", "top": "2026", "big": "AAJ", "x": 400, "y": 1100, "rot": -4},
+      {"type": "cutout", "subject": "beetle", "height": 484, "x": 760, "y": 1360, "rot": -20, "anim": "fade", "in": 0.25,
+       "move": {"to": [800, 1300], "at": 0.2, "dur": 1.4}},
+      {"type": "stamp", "text": "ZINDA HAI", "color": "green", "size": 100, "tilt": 8, "x": 600, "y": 1560, "anim": "slam", "at": 1.15}
+    ]},
+    {"start": 11.51, "title": ["BOMBARDIER", "BEETLE"], "red": 2, "scenery": 5, "elements": [
+      {"type": "cutout", "subject": "beetle", "height": 794, "x": 540, "y": 1030},
+      {"type": "name_tag", "line1": "BOMBARDIER", "line2": "BEETLE", "sub": "Brachininae · 1-2 cm", "x": 560, "y": 1590, "rot": -3, "at": 0.85}
+    ]},
+    {"start": 13.64, "title": ["SIRF", "1-2 CM"], "red": 2, "elements": [
+      {"type": "ruler", "units": "CM", "count": 4, "x": 540, "y": 1380},
+      {"type": "cutout", "subject": "beetle", "height": 446, "x": 480, "y": 1150, "rot": -90, "at": 0.2},
+      {"type": "bracket", "x0": 180, "x1": 580, "y": 1500, "at": 0.5, "dur": 0.6},
+      {"type": "stamp", "text": "1-2 CM", "size": 110, "tilt": -6, "x": 790, "y": 1620, "anim": "slam", "at": 1.2}
+    ]},
+    {"start": 16.75, "title": ["PET MEIN", "2 CHEMICAL"], "red": 2, "page": "dark", "elements": [
+      {"id": "b", "type": "cutout", "subject": "beetle", "mode": "xray", "height": 775, "x": 540, "y": 1150},
+      {"type": "glow", "on": "b", "rel": [0.57, 0.70], "rx": 62, "ry": 75, "level": [[0.9, 0], [1.3, 1]]},
+      {"type": "glow", "on": "b", "rel": [0.58, 0.84], "rx": 28, "ry": 33, "level": 0, "outline_color": "white", "width": 12},
+      {"type": "label", "text": "2 CHEMICALS", "x": 600, "y": 1420, "at": 1.0, "dark": true}
+    ]},
+    {"start": 18.89, "title": ["H2O2 +", "HYDROQUINONE"], "red": 2, "elements": [
+      {"type": "flask", "label": "HYDROGEN\nPEROXIDE", "liquid": [120, 190, 255], "x": 320, "y": 1180, "rot": -4, "in": 0.35},
+      {"type": "flask", "label": "HYDRO-\nQUINONE", "liquid": [240, 200, 120], "x": 760, "y": 1200, "rot": 4, "at": 1.45, "in": 0.35},
+      {"type": "text", "text": "+", "size": 170, "color": "red", "x": 545, "y": 1190, "at": 1.3}
+    ]},
+    {"start": 21.58, "title": ["KHATRA", "AAYA"], "red": 1, "scenery": 6, "elements": [
+      {"type": "cutout", "subject": "beetle", "height": 713, "x": 330, "y": 1230, "rot": 90, "anim": "none"},
+      {"type": "ant", "x": 1250, "y": 1220, "rot": 90, "anim": "none", "move": {"to": [830, 1220], "at": 0.0, "dur": 0.9}},
+      {"type": "warning", "x": 560, "y": 900, "scale": 0.75, "at": 0.38, "shake": {"at": 0.38, "amp": 8, "dur": 0.62, "decay": "linear"}}
+    ]},
+    {"start": 23.38, "title": ["SPECIAL", "CHAMBER"], "red": 2, "page": "dark", "elements": [
+      {"id": "b", "type": "cutout", "subject": "beetle", "mode": "xray", "height": 775, "x": 540, "y": 1150, "anim": "none"},
+      {"type": "glow", "on": "b", "rel": [0.57, 0.70], "rx": 62, "ry": 75, "level": [[0, 1], [2.2, 1], [3.4, 0.4]]},
+      {"type": "glow", "on": "b", "rel": [0.58, 0.84], "rx": 28, "ry": 33, "level": [[2.6, 0], [3.2, 0.6]], "color": [255, 150, 60], "outline_color": "white", "width": 12},
+      {"type": "flow", "on": "b", "rel": [0.57, 0.77], "to_on": "b", "to_rel": [0.58, 0.82], "at": 2.2, "dur": 1.2, "sfx": "boil", "sfx_db": -18, "sfx_trim": 1.6},
+      {"type": "label", "text": "RESERVOIR", "x": 90, "y": 1260, "at": 0.4, "dark": true},
+      {"type": "label", "text": "SPECIAL CHAMBER", "x": 600, "y": 1560, "at": 1.4, "dark": true}
+    ]},
+    {"start": 26.90, "title": ["ENZYME", "TRIGGER"], "red": 2, "page": "dark", "elements": [
+      {"id": "b", "type": "cutout", "subject": "beetle", "mode": "xray", "height": 775, "x": 540, "y": 1150, "anim": "none"},
+      {"type": "glow", "on": "b", "rel": [0.57, 0.70], "rx": 62, "ry": 75, "level": 0.4},
+      {"type": "glow", "on": "b", "rel": [0.58, 0.84], "rx": 28, "ry": 33, "level": [[1.4, 0.6], [1.7, 1.0]], "color": [255, 150, 60], "outline_color": "white", "width": 12},
+      {"type": "sparkle", "on": "b", "rel": [0.58, 0.84], "at": 0.23},
+      {"type": "label", "text": "+ ENZYMES", "x": 620, "y": 1560, "at": 0.25, "dark": true},
+      {"type": "flash", "at": 1.42, "dur": 0.25}
+    ]},
+    {"start": 29.64, "title": ["LIQUID", "UBAL GAYA"], "red": 2, "elements": [
+      {"type": "thermometer", "x": 360, "y": 1180, "level": [[0.7, 0], [2.1, 1]]},
+      {"type": "bubbles", "x0": 600, "x1": 960, "y": 1560, "at": 2.2},
+      {"type": "stamp", "text": "UBAL!", "size": 120, "tilt": 8, "x": 780, "y": 1660, "anim": "slam", "at": 2.25}
+    ]},
+    {"start": 32.92, "title": ["POP KE", "SAATH"], "red": 1, "scenery": 7, "elements": [
+      {"id": "b", "type": "cutout", "subject": "beetle", "height": 868, "x": 540, "y": 1070, "anim": "none",
+       "shake": {"at": 0, "amp": 14, "freq": 60, "decay": "exp", "k": 9}},
+      {"type": "spray", "on": "b", "anchor": "tail", "dy": -10, "dir": 90, "at": -0.15, "length": 520, "seed": 8, "sfx": false},
+      {"type": "burst", "text": "POP!", "size": 0.7, "x": 810, "y": 1420, "rot": -6, "in": 0.22, "sfx_db": -4}
+    ]},
+    {"start": 35.27, "title": ["NATURAL", "WEAPON"], "red": 2, "scenery": 8, "elements": [
+      {"type": "cutout", "subject": "beetle", "height": 837, "x": 540, "y": 1110, "anim": "none"},
+      {"type": "crosshair", "x": 540, "y": 1110, "r": 360, "at": 0.15},
+      {"type": "stamp", "text": "NATURAL WEAPON", "size": 80, "tilt": -6, "x": 540, "y": 1540, "anim": "slam", "at": 1.86}
+    ]},
+    {"start": 37.88, "title": ["POP KI", "SOUND"], "red": 1, "scenery": 9, "elements": [
+      {"id": "b", "type": "cutout", "subject": "beetle", "height": 744, "x": 540, "y": 1110},
+      {"type": "rings", "on": "b", "anchor": "tail", "at": 0.29},
+      {"type": "burst", "text": "POP", "size": 0.55, "x": 800, "y": 1430, "rot": 8, "at": 0.29, "in": 0.25},
+      {"type": "sound", "at": 0.51, "sfx": "mpop", "sfx_db": -9}
+    ]},
+    {"start": 40.37, "title": ["ISLIYE", "BOMBARDIER"], "red": 2, "elements": [
+      {"type": "name_tag", "line1": "BOMBARDIER", "line2": "BEETLE", "sub": "Brachininae · 1-2 cm", "x": 540, "y": 1120, "rot": -3, "sfx": false},
+      {"type": "stamp", "text": "ISLIYE NAAM", "size": 100, "tilt": -9, "x": 560, "y": 1470, "anim": "slam", "at": 0.43}
+    ]},
+    {"start": 42.57, "title": ["JAISE", "PATAKA!"], "red": 2, "elements": [
+      {"type": "firecracker", "label": "BOMB", "x": 540, "y": 1160, "until": 1.85, "shake": {"at": 0, "amp": 4, "freq": 40}},
+      {"type": "spark", "x": 530, "y": 840, "move": {"to": [530, 880], "at": 0, "dur": 1.85}, "until": 1.85},
+      {"type": "smoke", "x": 540, "y": 1250, "at": 1.85, "n": 20, "seed": 12, "spread": 200},
+      {"type": "burst", "text": "PHAT!", "size": 1.0, "x": 540, "y": 1150, "rot": -5, "anim": "punch", "at": 1.85, "sfx": false},
+      {"type": "cutout", "subject": "beetle", "height": 422, "x": 830, "y": 1600, "rot": -15, "at": 2.75}
+    ]}
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "topic": "Venus flytrap",
+  "voiceAccent": "hi-IN-anuj",
+  "voiceStyle": "energetic",
+  "pitch": 1.18,
+  "fps": 24,
+  "seed": 98271,
+  "editorialReview": "Wikipedia fact-checked. Removed unsupported only-geography and filler; matched licensed closeups to the 20-second two-touch mechanism.",
+  "scenes": [
+    {
+      "narration": "ये पौधा… सच में कीड़े पकड़कर खाता है!",
+      "line1": "LIVING",
+      "line2": "TRAP!",
+      "visual": "photo",
+      "media": "assets/image_0.jpg",
+      "backgroundMode": "forest",
+      "layout": "hero",
+      "camera": "push",
+      "motion": "reveal",
+      "theme": "field-journal",
+      "delivery": "hook",
+      "effects": [
+        {
+          "type": "burst",
+          "where": "right",
+          "at": 0.5,
+          "text": "HUNTER!",
+          "intensity": 0.9
+        }
+      ],
+      "callout": "IT EATS BUGS"
+    },
+    {
+      "narration": "अमेरिका की नॉर्थ और साउथ कैरोलिना की दलदली ज़मीन इसका प्राकृतिक घर है।",
+      "line1": "WILD",
+      "line2": "CAROLINAS",
+      "visual": "photo",
+      "media": "assets/image_1.jpg",
+      "backgroundMode": "paper",
+      "layout": "left",
+      "camera": "pan-left",
+      "motion": "slide-left",
+      "theme": "newsprint",
+      "delivery": "explain",
+      "effects": [],
+      "callout": "N + S CAROLINA"
+    },
+    {
+      "narration": "इसकी पत्तियों में छोटे सेंसर जैसे बाल होते हैं, जिन्हें कीड़े छूते हैं।",
+      "line1": "TINY",
+      "line2": "SENSORS",
+      "visual": "photo",
+      "media": "assets/curated_flytrap_closed.jpg",
+      "credit": {
+        "title": "File:Dionaea muscipula (2944503918).jpg",
+        "source": "https://commons.wikimedia.org/wiki/File:Dionaea_muscipula_(2944503918).jpg",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "author": "Alex Lomas"
+      },
+      "backgroundMode": "lab",
+      "layout": "detail",
+      "camera": "push",
+      "motion": "float",
+      "theme": "blueprint",
+      "delivery": "explain",
+      "effects": [
+        {
+          "type": "rings",
+          "where": "left",
+          "at": 0.55,
+          "intensity": 0.6
+        }
+      ],
+      "callout": "SENSITIVE HAIRS"
+    },
+    {
+      "narration": "एक बार छूना काफी नहीं! करीब बीस सेकंड में दूसरी बार छुआ… तभी जाल बंद होता है!",
+      "line1": "TWO",
+      "line2": "TOUCHES",
+      "visual": "diagram",
+      "backgroundMode": "lab",
+      "layout": "comparison",
+      "camera": "static",
+      "motion": "static",
+      "theme": "infographic",
+      "delivery": "reveal",
+      "diagram": {
+        "heading": "HOW THE TRAP TRIGGERS",
+        "nodes": [
+          {
+            "label": "1st touch",
+            "detail": "Sensor hair detects prey"
+          },
+          {
+            "label": "2nd touch",
+            "detail": "Within ~20 seconds"
+          },
+          {
+            "label": "JAWS SNAP",
+            "detail": "Trap closes around prey"
+          }
+        ],
+        "links": [
+          {
+            "from": 0,
+            "to": 1,
+            "label": "about 20 s"
+          },
+          {
+            "from": 1,
+            "to": 2,
+            "label": "trigger"
+          }
+        ]
+      },
+      "effects": [
+        {
+          "type": "text",
+          "where": "bottom",
+          "text": "2 TOUCHES",
+          "at": 0.55,
+          "intensity": 0.9
+        }
+      ],
+      "callout": "DOUBLE SIGNAL"
+    },
+    {
+      "narration": "और ये ट्रिगर कभी-कभी एक सेकंड के दसवें हिस्से में हो सकता है!",
+      "line1": "0.1s",
+      "line2": "TRIGGER",
+      "visual": "photo",
+      "media": "assets/curated_flytrap_macro.jpg",
+      "credit": {
+        "title": "File:Dionaea muscipula (2944504124).jpg",
+        "source": "https://commons.wikimedia.org/wiki/File:Dionaea_muscipula_(2944504124).jpg",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "author": "Alex Lomas"
+      },
+      "backgroundMode": "paper",
+      "layout": "right",
+      "camera": "push",
+      "motion": "shake",
+      "theme": "dossier",
+      "delivery": "reveal",
+      "effects": [
+        {
+          "type": "flash",
+          "where": "center",
+          "at": 0.55,
+          "intensity": 0.65
+        }
+      ],
+      "callout": "1/10 SECOND"
+    },
+    {
+      "narration": "सोचो, एक पौधा भी शिकार के लिए इतना होशियार सिस्टम रखता है!",
+      "line1": "PLANT",
+      "line2": "PREDATOR",
+      "visual": "photo",
+      "media": "assets/image_0.jpg",
+      "backgroundMode": "forest",
+      "layout": "poster",
+      "camera": "pull",
+      "motion": "reveal",
+      "theme": "cream",
+      "delivery": "payoff",
+      "effects": [
+        {
+          "type": "sparkle",
+          "where": "left",
+          "at": 0.6,
+          "intensity": 0.8
+        }
+      ],
+      "callout": "CARNIVOROUS!"
+    }
+  ]
+}

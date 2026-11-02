@@ -1,0 +1,5 @@
+Use the paper-doc skill. Here is my voice recording: "<path to voice file>". Topic: <TOPIC>.
+Subject photo(s): "<path to photo>" (my own / I have the right to use it).
+Polish my voice (medium), transcribe it word by word, then show me the scene plan table
+(time · words · title with the red word · visual · sound) before you build anything.
+Then write the plan, show me the contact sheet, and render the 9:16 reel.

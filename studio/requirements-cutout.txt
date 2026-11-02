@@ -1,0 +1,5 @@
+# Optional true transparent paper-cutout segmentation (cross-platform CPU).
+# Base original renderer also requires numpy and Pillow.
+numpy>=1.26,<3
+pillow>=10,<13
+rembg[cpu]>=2.0.70,<3

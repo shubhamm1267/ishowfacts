@@ -1,0 +1,221 @@
+{
+  "topic": "Electric eel",
+  "voiceAccent": "hi-IN-ayush",
+  "voiceStyle": "energetic",
+  "pitch": 1.19,
+  "fps": 24,
+  "seed": 41862,
+  "editorialReview": "Verified organism imagery, no roller-coaster name collision or severed-tail cutout. 860V species-level fact and dated 1775→1800 historical infographic.",
+  "scenes": [
+    {
+      "narration": "ये कोई साधारण मछली नहीं… पानी के अंदर बिजली का झटका मारती है!",
+      "line1": "ELECTRIC",
+      "line2": "EEL!",
+      "visual": "photo",
+      "media": "assets/image_1.jpg",
+      "backgroundMode": "underwater",
+      "layout": "hero",
+      "camera": "push",
+      "motion": "reveal",
+      "theme": "blueprint",
+      "delivery": "hook",
+      "effects": [
+        {
+          "type": "flash",
+          "where": "center",
+          "at": 0.42,
+          "intensity": 0.8
+        }
+      ],
+      "callout": "SHOCKING FISH"
+    },
+    {
+      "narration": "ये इलेक्ट्रिक ईल, दक्षिण अमेरिका की मीठे पानी वाली मछली है!",
+      "line1": "SOUTH",
+      "line2": "AMERICA",
+      "visual": "diagram",
+      "backgroundMode": "underwater",
+      "layout": "comparison",
+      "camera": "static",
+      "motion": "static",
+      "theme": "field-journal",
+      "delivery": "explain",
+      "diagram": {
+        "heading": "WHERE IT LIVES",
+        "nodes": [
+          {
+            "label": "S. AMERICA",
+            "detail": "Tropical continent"
+          },
+          {
+            "label": "FRESH WATER",
+            "detail": "Rivers and waterways"
+          },
+          {
+            "label": "ELECTRIC EEL",
+            "detail": "A freshwater fish"
+          }
+        ],
+        "links": [
+          {
+            "from": 0,
+            "to": 1,
+            "label": "habitat"
+          },
+          {
+            "from": 1,
+            "to": 2,
+            "label": "home"
+          }
+        ]
+      },
+      "effects": [],
+      "callout": "NOT AN OCEAN EEL"
+    },
+    {
+      "narration": "शिकार पास आया, तो ये अपने शरीर से ज़ोरदार बिजली पैदा कर सकती है!",
+      "line1": "BODY",
+      "line2": "BATTERY",
+      "visual": "photo",
+      "media": "assets/curated_electric_eel.jpg",
+      "credit": {
+        "title": "File:Electric Eel.jpg",
+        "source": "https://commons.wikimedia.org/wiki/File:Electric_Eel.jpg",
+        "license": "CC BY 2.5",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.5",
+        "author": "Vsion"
+      },
+      "backgroundMode": "underwater",
+      "layout": "left",
+      "camera": "pan-right",
+      "motion": "slide-right",
+      "theme": "newsprint",
+      "delivery": "explain",
+      "effects": [
+        {
+          "type": "spark",
+          "where": "right",
+          "at": 0.52,
+          "intensity": 0.8
+        }
+      ],
+      "callout": "ELECTRIC ORGANS"
+    },
+    {
+      "narration": "इतनी ज़्यादा कि कुछ प्रजातियाँ आठ सौ साठ वोल्ट तक का झटका दे सकती हैं!",
+      "line1": "860 V",
+      "line2": "SHOCK!",
+      "visual": "diagram",
+      "backgroundMode": "lab",
+      "layout": "comparison",
+      "camera": "static",
+      "motion": "static",
+      "theme": "infographic",
+      "delivery": "reveal",
+      "diagram": {
+        "heading": "UP TO 860 VOLTS",
+        "nodes": [
+          {
+            "label": "ELECTROCYTES",
+            "detail": "Specialized electric cells"
+          },
+          {
+            "label": "DISCHARGE",
+            "detail": "Cells activate together"
+          },
+          {
+            "label": "860 V",
+            "detail": "Some electric eel species"
+          }
+        ],
+        "links": [
+          {
+            "from": 0,
+            "to": 1,
+            "label": "activate"
+          },
+          {
+            "from": 1,
+            "to": 2,
+            "label": "power"
+          }
+        ]
+      },
+      "effects": [
+        {
+          "type": "text",
+          "where": "bottom",
+          "at": 0.5,
+          "text": "860 V",
+          "intensity": 1
+        }
+      ],
+      "callout": "ELECTRIC SHOCK"
+    },
+    {
+      "narration": "सत्रह सौ पचहत्तर में वैज्ञानिक इसकी बिजली की ताकत पर शोध कर रहे थे।",
+      "line1": "1775",
+      "line2": "DISCOVERY",
+      "visual": "diagram",
+      "backgroundMode": "lab",
+      "layout": "comparison",
+      "camera": "static",
+      "motion": "static",
+      "theme": "dossier",
+      "delivery": "suspense",
+      "diagram": {
+        "heading": "ELECTRICITY TIMELINE",
+        "nodes": [
+          {
+            "label": "1775",
+            "detail": "Studies of electric eels"
+          },
+          {
+            "label": "BIOELECTRIC",
+            "detail": "Natural electrical power"
+          },
+          {
+            "label": "1800",
+            "detail": "First electric battery"
+          }
+        ],
+        "links": [
+          {
+            "from": 0,
+            "to": 1,
+            "label": "research"
+          },
+          {
+            "from": 1,
+            "to": 2,
+            "label": "inspired"
+          }
+        ]
+      },
+      "effects": [],
+      "callout": "NATURE TO SCIENCE"
+    },
+    {
+      "narration": "और ऐसे शोधों ने अठारह सौ में पहली बैटरी बनने की समझ को आगे बढ़ाया!",
+      "line1": "NATURE",
+      "line2": "TO BATTERY",
+      "visual": "photo",
+      "media": "assets/image_1.jpg",
+      "backgroundMode": "underwater",
+      "layout": "poster",
+      "camera": "pull",
+      "motion": "reveal",
+      "theme": "cream",
+      "delivery": "payoff",
+      "effects": [
+        {
+          "type": "glow",
+          "where": "left",
+          "at": 0.55,
+          "intensity": 0.85
+        }
+      ],
+      "callout": "REAL ELECTRICITY!"
+    }
+  ]
+}

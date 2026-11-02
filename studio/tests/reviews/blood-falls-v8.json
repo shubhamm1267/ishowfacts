@@ -1,0 +1,62 @@
+{
+  "topic": "Blood Falls",
+  "language": "en",
+  "headlineText": "WHY IS THIS GLACIER BLEEDING?",
+  "headlineHighlight": "WHY IS THIS",
+  "voiceAccent": "en-US",
+  "voiceStyle": "energetic",
+  "pitch": 1.0,
+  "tempo": 1.07,
+  "fps": 24,
+  "seed": 9222026,
+  "editorialReview": "English-only text and speech, grounded in Blood Falls encyclopedic entry, National Science Foundation public-domain glacier photography; dramatic but accurate story beats.",
+  "sources": [
+    {"name": "Blood Falls — encyclopedia source", "url": "https://en.wikipedia.org/wiki/Blood_Falls"}
+  ],
+  "scenes": [
+    {
+      "narration": "Antarctica has a glacier that looks like it's bleeding. Seriously—look at that rusty-red streak!",
+      "line1": "A BLEEDING", "line2": "GLACIER?!", "beatTextHi": "NO WAY!",
+      "visual": "photo", "visualRole": "evidence", "subjectEntity": "Blood Falls red brine at Taylor Glacier",
+      "visualQuery": "Blood Falls Taylor Glacier rust red", "media": "assets/review_bloodfalls_close.jpg",
+      "credit": {"source": "https://commons.wikimedia.org/wiki/File:Blood_Falls_2010-12-14.jpg", "license": "Public domain", "author": "Peter West, National Science Foundation", "title": "Blood Falls 2010-12-14"},
+      "layout": "poster", "setting": "plain", "backgroundMode": "photo", "theme": "newsprint",
+      "photoStyle": "poster", "camera": "push", "motion": "reveal", "titleStyle": "kinetic",
+      "delivery": "hook", "action": "identity", "soundCue": "whoosh", "effects": []
+    },
+    {
+      "narration": "Plot twist: it's not blood. It's saltwater, flowing straight out of Antarctica's Taylor Glacier.",
+      "line1": "NOT BLOOD", "line2": "SALT WATER", "beatTextHi": "UNDER THE ICE",
+      "visual": "photo", "visualRole": "context", "subjectEntity": "Taylor Glacier ice tongue Antarctica",
+      "visualQuery": "Taylor Glacier Antarctica", "media": "assets/review_bloodfalls_2010.jpg",
+      "credit": {"source": "https://commons.wikimedia.org/wiki/File:Blood_Falls_2010_01.jpg", "license": "Public domain", "author": "Peter West, National Science Foundation", "title": "Blood Falls 2010 01"},
+      "layout": "left", "setting": "plain", "backgroundMode": "sky", "theme": "field-journal",
+      "photoStyle": "clean", "camera": "pan-left", "motion": "slide-left", "titleStyle": "bold",
+      "delivery": "suspense", "action": "none", "soundCue": "wind", "effects": []
+    },
+    {
+      "narration": "And that bizarre color? Iron oxide in the salty plume. Think of it as rust-colored water!",
+      "line1": "IRON OXIDE", "line2": "RED WATER", "beatTextHi": "NATURE'S CHEMISTRY",
+      "visual": "diagram", "visualRole": "diagram", "subjectEntity": "Iron oxide tainted saltwater plume at Blood Falls",
+      "visualQuery": "Blood Falls iron oxide saltwater", "diagram": {
+        "heading": "THE CHEMISTRY", "style": "pathways", "nodes": [
+          {"label": "SALTWATER", "detail": "Flows from glacier"},
+          {"label": "IRON OXIDE", "detail": "Colors the plume"},
+          {"label": "RUSTY RED", "detail": "Visible on the ice"}
+        ], "links": [{"from": 0, "to": 1}, {"from": 1, "to": 2}]
+      },
+      "layout": "detail", "setting": "xray", "backgroundMode": "lab", "theme": "blueprint",
+      "camera": "static", "motion": "static", "titleStyle": "typewriter",
+      "delivery": "reveal", "action": "signal", "soundCue": "wind", "effects": []
+    },
+    {
+      "narration": "The red plume even spills onto an ice-covered lake. Antarctica really knows how to make an entrance!",
+      "line1": "RED ON WHITE", "line2": "REAL SCIENCE", "beatTextHi": "NOT A HORROR MOVIE!",
+      "visual": "photo", "visualRole": "evidence", "subjectEntity": "Taylor Glacier Blood Falls aerial view with saltwater plume",
+      "visualQuery": "Blood Falls aerial red glacier Antarctica", "media": "assets/image_0.jpg",
+      "layout": "right", "setting": "plain", "backgroundMode": "sky", "theme": "dossier",
+      "photoStyle": "frame", "camera": "pull", "motion": "slide-right", "titleStyle": "bold",
+      "delivery": "payoff", "action": "none", "soundCue": "whoosh", "effects": []
+    }
+  ]
+}

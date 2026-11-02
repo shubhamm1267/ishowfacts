@@ -1,0 +1,64 @@
+{
+  "topic": "Wood frog",
+  "headlineHi": "ये मेंढक जमकर भी कैसे ज़िंदा है?",
+  "voiceAccent": "hi-IN-ayush",
+  "voiceStyle": "energetic",
+  "pitch": 1.19,
+  "tempo": 1.15,
+  "fps": 24,
+  "seed": 718403,
+  "editorialReview": "Six sourced Hindi beats. Removed satellite-map filler, restored exact wood frog photos, made the survival mechanism a labeled illustration, animated frost on freezing scenes, distinct paper layouts and short funny pause-button analogy. Reference-like high-contrast Devanagari top banner and animated lower-third punchlines. No unverified frozen-frog photography.",
+  "sources": [
+    { "name": "US National Park Service — Wood Frog, Kobuk Valley", "url": "https://www.nps.gov/kova/learn/nature/wood-frog.htm" },
+    { "name": "US National Park Service — Wood Frog Biological Miracle", "url": "https://www.nps.gov/gaar/learn/nature/wood-frog-page-2.htm" },
+    { "name": "American Museum of Natural History — Frog Antifreeze", "url": "https://www.amnh.org/exhibitions/frogs-a-chorus-of-colors/frogs-and-the-ecosystem/frog-antifreeze" }
+  ],
+  "scenes": [
+    {
+      "narration": "ये वुड फ्रॉग है! सर्दियों में जमकर इसका दिल तक धड़कना बंद कर देता है… फिर भी ये मरता नहीं!",
+      "line1": "जम गया", "line2": "फिर भी ज़िंदा!", "beatTextHi": "क्या सच में?",
+      "visual": "photo", "media": "assets/image_0.jpg", "photoStyle": "clean", "backgroundMode": "forest",
+      "layout": "hero", "camera": "push", "motion": "reveal", "theme": "field-journal", "delivery": "hook",
+      "soundCue": "question", "effects": [{"type":"frost","where":"center","at":0.28,"intensity":0.8}]
+    },
+    {
+      "narration": "बर्फ गिरते ही ये सूखे पत्तों में छिपता है। फिर इसकी आंखें और शरीर का पानी जमने लगता है!",
+      "line1": "बर्फ़ीली", "line2": "नींद!", "beatTextHi": "शरीर जमता है",
+      "visual": "photo", "media": "assets/image_3.jpg", "photoStyle": "poster", "backgroundMode": "forest",
+      "layout": "lower-left", "camera": "pan-right", "motion": "slide-left", "theme": "newsprint", "delivery": "explain",
+      "soundCue": "wind", "effects": [{"type":"frost","where":"center","at":0.35,"intensity":0.6}]
+    },
+    {
+      "narration": "अब असली चाल: इसका लिवर ग्लूकोज़, यानी चीनी बनाता है, जो कोशिकाओं को बर्फ से बचाती है!",
+      "line1": "चीनी बनी", "line2": "ढाल!", "beatTextHi": "ग्लूकोज़ = सुरक्षा",
+      "visual": "diagram", "backgroundMode": "lab", "layout": "comparison", "camera": "static", "motion": "static",
+      "theme": "infographic", "delivery": "reveal", "soundCue": "pop", "effects": [],
+      "diagram": {"style":"orbit","heading":"प्राकृतिक एंटी-फ्रीज़","nodes":[
+        {"label":"ठंड", "detail":"बाहर बर्फ बनने लगी"},
+        {"label":"लिवर", "detail":"ग्लूकोज़ बनाता है"},
+        {"label":"कोशिकाएं", "detail":"अंदर सुरक्षित रहती हैं"}
+      ]}
+    },
+    {
+      "narration": "मतलब बाहर बर्फ… लेकिन कोशिकाओं के भीतर जान बची रहती है। ये कोई जादू नहीं, बायोलॉजी है!",
+      "line1": "बाहर बर्फ", "line2": "अंदर बचाव", "beatTextHi": "असली साइंस!",
+      "visual": "photo", "media": "assets/image_2.jpg", "photoStyle": "frame", "backgroundMode": "lab",
+      "layout": "right", "camera": "pull", "motion": "slide-right", "theme": "blueprint", "delivery": "explain",
+      "soundCue": "tick", "effects": [{"type":"frost","where":"center","at":0.39,"intensity":0.55}]
+    },
+    {
+      "narration": "पूरी सर्दी इसकी सांस और धड़कन रुक सकती है। सुनकर लगता है जैसे मेंढक ने पॉज़ बटन दबा दिया!",
+      "line1": "दिल का", "line2": "पॉज़ बटन!", "beatTextHi": "रुको ज़रा!",
+      "visual": "photo", "media": "assets/image_3.jpg", "photoStyle": "clean", "backgroundMode": "paper",
+      "layout": "left", "camera": "handheld", "motion": "shake", "theme": "cream", "delivery": "suspense",
+      "soundCue": "question", "effects": [{"type":"reaction","where":"right","text":"shocked","at":0.48,"intensity":0.9}]
+    },
+    {
+      "narration": "वसंत की गर्मी आते ही ये धीरे-धीरे पिघलता है… दिल फिर चलता है, और वुड फ्रॉग वापस कूदने लगता है!",
+      "line1": "गर्मी आई", "line2": "दिल चल पड़ा!", "beatTextHi": "फिर से ज़िंदा!",
+      "visual": "photo", "media": "assets/image_0.jpg", "photoStyle": "poster", "backgroundMode": "forest",
+      "layout": "hero", "camera": "push", "motion": "reveal", "theme": "dossier", "delivery": "payoff",
+      "soundCue": "boom", "effects": [{"type":"flash","where":"center","at":0.64,"intensity":0.3}]
+    }
+  ]
+}

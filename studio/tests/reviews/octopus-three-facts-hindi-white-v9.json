@@ -1,0 +1,76 @@
+{
+  "topic": "Octopus",
+  "language": "hi",
+  "backgroundPalette": "white",
+  "headlineText": "ऑक्टोपस के ये ३ राज़ हिला देंगे!",
+  "headlineHighlight": "ये ३ राज़",
+  "facts": [
+    "ऑक्टोपस के शरीर में कोई कठोर कंकाल नहीं होता, इसलिए वह अपनी चोंच जितनी चौड़ी दरारों से निकल सकता है।",
+    "ऑक्टोपस पानी को साइफ़न से तेज़ी से बाहर फेंककर जेट-प्रणोदन से तैर सकता है।",
+    "ऑक्टोपस के तीन दिल होते हैं: दो गलफड़ों तक और तीसरा पूरे शरीर में खून पहुँचाता है।"
+  ],
+  "voiceAccent": "hi-IN-ayush", "voiceStyle": "energetic", "pitch": 1.13,
+  "tempo": 1.18, "fps": 24, "seed": 291103,
+  "editorialReview": "Three independently verified octopus facts, full Devanagari, corrected nonsensical swimming narration. Audited four exact octopus photos (CC0 and CC BY) and subject-matched each shot. White paper palette and single-purpose no-overlap diagrams.",
+  "sources": [
+    {"name":"Smithsonian Ocean: octopus siphon and three hearts", "url":"https://ocean.si.edu/ocean-life/invertebrates/octopuses-squids-and-relatives"},
+    {"name":"Smithsonian Ocean: octopus funnel", "url":"https://ocean.si.edu/ocean-life/invertebrates/octopus-shows-its-funnel"},
+    {"name":"Natural History Museum: octopus hearts", "url":"https://www.nhm.ac.uk/discover/octopuses-keep-surprising-us-here-are-eight-examples-how.html"}
+  ],
+  "scenes": [
+    {
+      "factIndex":0, "narration":"अरे भाई, इस ऑक्टोपस को देखो! ये अपने शरीर से ऐसा कारनामा करता है कि दिमाग़ हिल जाएगा!",
+      "line1":"ये क्या कर गया?", "line2":"कमाल का जीव!", "beatTextHi":"असली ऑक्टोपस!",
+      "visual":"photo", "visualRole":"subject", "subjectEntity":"Octopus vulgaris underwater on seabed",
+      "visualQuery":"common octopus underwater seabed", "media":"assets/review_octopus_3.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Common_octopus_(Octopus_vulgaris)_moving_on_sandy_seabed_during_Sentinelle_4_project_-_Mus%C3%A9e_Subaquatique_de_Marseille_-_Anse_des_Catalans_-_2025.jpg", "license":"CC BY 4.0", "author":"Karim saari", "title":"Common octopus moving on sandy seabed"},
+      "layout":"poster", "setting":"plain", "backgroundMode":"photo", "theme":"newsprint", "photoStyle":"poster", "camera":"push", "motion":"reveal", "titleStyle":"kinetic", "delivery":"hook", "action":"identity", "soundCue":"whoosh", "effects":[]
+    },
+    {
+      "factIndex":0, "narration":"इसके शरीर में हड्डियाँ नहीं! अपनी कठोर चोंच जितनी छोटी दरार से भी निकल सकता है!",
+      "line1":"हड्डी ही नहीं!", "line2":"दरार से बाहर!", "beatTextHi":"फँसना मुश्किल!",
+      "visual":"photo", "visualRole":"evidence", "subjectEntity":"Octopus arms and flexible body",
+      "visualQuery":"octopus tentacles close up", "media":"assets/review_octopus_1.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Octopus-vulgaris-1.jpg", "license":"CC0", "author":"MartinThoma", "title":"Octopus-vulgaris-1"},
+      "layout":"left", "setting":"plain", "backgroundMode":"photo", "theme":"field-journal", "photoStyle":"clean", "camera":"pan-right", "motion":"slide-left", "titleStyle":"bold", "delivery":"reveal", "action":"none", "soundCue":"pop", "effects":[]
+    },
+    {
+      "factIndex":1, "narration":"दूसरा झटका! ये पानी को एक खास नली, साइफ़न से बाहर फेंकता है।",
+      "line1":"पानी का जेट!", "line2":"साइफ़न की ताकत", "beatTextHi":"अंदर से बाहर!",
+      "visual":"diagram", "visualRole":"diagram", "subjectEntity":"Octopus siphon propels body through water",
+      "visualQuery":"octopus siphon jet propulsion", "diagram":{"heading":"ये कैसे तैरता है?", "style":"pathways", "nodes":[
+        {"label":"पानी अंदर", "detail":"शरीर की थैली में"},
+        {"label":"साइफ़न", "detail":"पानी तेज़ी से बाहर"},
+        {"label":"तेज़ रफ़्तार", "detail":"विपरीत दिशा में गति"}
+      ], "links":[{"from":0,"to":1},{"from":1,"to":2}]},
+      "layout":"detail", "setting":"plain", "backgroundMode":"lab", "theme":"blueprint", "camera":"static", "motion":"static", "titleStyle":"bold", "delivery":"explain", "action":"signal", "soundCue":"tick", "effects":[]
+    },
+    {
+      "factIndex":1, "narration":"पानी पीछे निकला, तो ऑक्टोपस आगे! अपना ही मिनी रॉकेट समझ लो, भाई!",
+      "line1":"समुद्री रॉकेट!", "line2":"बिना इंजन", "beatTextHi":"देखो इसकी चाल!",
+      "visual":"photo", "visualRole":"evidence", "subjectEntity":"Octopus vulgaris body and arms",
+      "visualQuery":"octopus underwater body", "media":"assets/review_octopus_0.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Octopus-vulgaris.jpg", "license":"CC0", "author":"MartinThoma", "title":"Octopus-vulgaris"},
+      "layout":"right", "setting":"plain", "backgroundMode":"photo", "theme":"dossier", "photoStyle":"frame", "camera":"pull", "motion":"slide-right", "titleStyle":"bold", "delivery":"payoff", "action":"none", "soundCue":"whoosh", "effects":[]
+    },
+    {
+      "factIndex":2, "narration":"लेकिन असली बवाल सुनो! इंसान का एक दिल, और इस ऑक्टोपस के पूरे तीन दिल!",
+      "line1":"एक नहीं, तीन!", "line2":"तीन दिल!", "beatTextHi":"सच में तीन!",
+      "visual":"diagram", "visualRole":"diagram", "subjectEntity":"Octopus three-heart circulatory system",
+      "visualQuery":"octopus three hearts anatomy", "diagram":{"heading":"तीन दिलों का काम", "style":"mechanism", "nodes":[
+        {"label":"मुख्य दिल", "detail":"शरीर को खून"},
+        {"label":"पहला दिल", "detail":"पहले गलफड़े को"},
+        {"label":"दूसरा दिल", "detail":"दूसरे गलफड़े को"}
+      ], "links":[{"from":0,"to":1},{"from":0,"to":2}]},
+      "layout":"detail", "setting":"plain", "backgroundMode":"lab", "theme":"blueprint", "camera":"static", "motion":"static", "titleStyle":"bold", "delivery":"reveal", "action":"signal", "soundCue":"boom", "effects":[]
+    },
+    {
+      "factIndex":2, "narration":"दो दिल गलफड़ों के लिए, तीसरा पूरे शरीर के लिए। साला, एक से तो हमारी भी नहीं चलती!",
+      "line1":"तीन दिलों वाला", "line2":"समुद्री सुपरस्टार", "beatTextHi":"किसका दिल बड़ा?",
+      "visual":"photo", "visualRole":"subject", "subjectEntity":"Octopus vulgaris closeup eyes",
+      "visualQuery":"octopus vulgaris eyes closeup", "media":"assets/review_octopus_2.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Octopus_vulgaris_-_Common_octopus_(7816130896).jpg", "license":"CC BY 2.0", "author":"Jean-Marc Kuffer", "title":"Octopus vulgaris common octopus eyes"},
+      "layout":"poster", "setting":"plain", "backgroundMode":"photo", "theme":"newsprint", "photoStyle":"poster", "camera":"push", "motion":"reveal", "titleStyle":"kinetic", "delivery":"payoff", "action":"identity", "soundCue":"ding", "effects":[]
+    }
+  ]
+}

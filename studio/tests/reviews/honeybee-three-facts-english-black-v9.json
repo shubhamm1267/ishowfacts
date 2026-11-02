@@ -1,0 +1,73 @@
+{
+  "topic": "Honey bee",
+  "language": "en",
+  "backgroundPalette": "black",
+  "headlineText": "BEES BUILD THIS? THE TWIST IS WILD!",
+  "headlineHighlight": "THE TWIST",
+  "facts": [
+    "Honey bees build honeycomb with wax cells arranged in regular hexagonal patterns that conserve material and offer storage space.",
+    "Honey bees collect watery flower nectar and reduce its moisture content before storing honey in wax-sealed honeycomb cells.",
+    "Honey badgers are known to raid bee nests to feed on the bee larvae found inside, not simply to collect honey."
+  ],
+  "voiceAccent": "en-US", "voiceStyle": "energetic", "pitch": 1.02,
+  "tempo": 1.18, "fps": 24, "seed": 311103,
+  "editorialReview": "Three independently grounded honey bee facts; English-only captions, headline, diagrams and narration; genuine bees, honeycomb and Mellivora capensis species images. Black paper palette. Corrected honey badger larvae diet rather than repeating myth.",
+  "sources": [
+    {"name":"Scientific paper on honeycomb geometry", "url":"https://pmc.ncbi.nlm.nih.gov/articles/PMC10465656/"},
+    {"name":"Natural History Museum: how bees make honey", "url":"https://www.nhm.ac.uk/discover/what-is-honey.html"},
+    {"name":"South African National Biodiversity Institute: honey badger", "url":"https://www.sanbi.org/animal-of-the-week/honey-badger/"}
+  ],
+  "scenes": [
+    {
+      "factIndex":0, "narration":"Look at this honeycomb! Tiny bees built these crazy neat hexagons. No rulers. No blueprints. Seriously!",
+      "line1":"THE BEE BLUEPRINT", "line2":"PERFECT HEXAGONS?", "beatTextHi":"NO HUMAN BUILT THIS!",
+      "visual":"photo", "visualRole":"subject", "subjectEntity":"Honey bees and hexagonal wax cells",
+      "visualQuery":"honeybees on honeycomb hexagonal cells", "media":"assets/review_comb_1.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Honey_Bees_on_Comb_2.jpg", "license":"CC0", "author":"Shane Harris / Alabama Extension", "title":"Honey Bees on Comb 2"},
+      "layout":"poster", "setting":"plain", "backgroundMode":"photo", "theme":"newsprint", "photoStyle":"poster", "camera":"push", "motion":"reveal", "titleStyle":"kinetic", "delivery":"hook", "action":"identity", "soundCue":"whoosh", "effects":[]
+    },
+    {
+      "factIndex":0, "narration":"Here's the trick: six-sided cells store loads of honey while using surprisingly little wax. That's some engineering!",
+      "line1":"WHY SIX SIDES?", "line2":"LESS WAX!", "beatTextHi":"NATURE'S ENGINEERS",
+      "visual":"photo", "visualRole":"evidence", "subjectEntity":"Hexagonal wax honeycomb with workers",
+      "visualQuery":"hexagonal honeycomb wax with bees", "media":"assets/review_comb_0.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Honey_Bees_on_Comb.jpg", "license":"Public domain", "author":"Killerlimpet", "title":"Honey Bees on Comb"},
+      "layout":"left", "setting":"plain", "backgroundMode":"photo", "theme":"field-journal", "photoStyle":"clean", "camera":"pan-right", "motion":"slide-left", "titleStyle":"bold", "delivery":"reveal", "action":"none", "soundCue":"pop", "effects":[]
+    },
+    {
+      "factIndex":1, "narration":"Second surprise: bees don't pick up ready-made honey. They collect flower nectar, and it's really watery!",
+      "line1":"HONEY? NOT YET!", "line2":"STARTS AS NECTAR", "beatTextHi":"WATCH THIS BEE",
+      "visual":"photo", "visualRole":"evidence", "subjectEntity":"Apis mellifera honey bee collecting nectar on a flower",
+      "visualQuery":"honey bee on yellow flower nectar", "media":"assets/review_bee.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Honeybee_apis_mellifera.jpg", "license":"Public domain", "author":"Jon Sullivan", "title":"Honeybee apis mellifera"},
+      "layout":"right", "setting":"plain", "backgroundMode":"photo", "theme":"dossier", "photoStyle":"frame", "camera":"pull", "motion":"slide-right", "titleStyle":"bold", "delivery":"suspense", "action":"none", "soundCue":"tick", "effects":[]
+    },
+    {
+      "factIndex":1, "narration":"They pass nectar between workers, fan away the water, and finally seal thick honey in wax cells!",
+      "line1":"NECTAR TO HONEY", "line2":"WING-POWERED DRYING", "beatTextHi":"THAT'S THE SECRET!",
+      "visual":"diagram", "visualRole":"diagram", "subjectEntity":"Honey production from nectar through drying and sealing",
+      "visualQuery":"nectar honey evaporation bees wings", "diagram":{"heading":"HOW HONEY HAPPENS", "style":"pathways", "nodes":[
+        {"label":"FLOWER NECTAR", "detail":"Watery and sweet"},
+        {"label":"FANNING WINGS", "detail":"Moisture escapes"},
+        {"label":"THICK HONEY", "detail":"Sealed in wax cells"}
+      ], "links":[{"from":0,"to":1},{"from":1,"to":2}]},
+      "layout":"detail", "setting":"plain", "backgroundMode":"lab", "theme":"blueprint", "camera":"static", "motion":"static", "titleStyle":"bold", "delivery":"explain", "action":"signal", "soundCue":"whoosh", "effects":[]
+    },
+    {
+      "factIndex":2, "narration":"Third fact is savage! Honey badgers raid bee nests, often hunting the larvae inside. Not just the honey!",
+      "line1":"THE HIVE BURGLAR!", "line2":"HONEY BADGER", "beatTextHi":"THAT'S NOT A BEE!",
+      "visual":"photo", "visualRole":"evidence", "subjectEntity":"Honey badger Mellivora capensis",
+      "visualQuery":"Mellivora capensis honey badger wild", "media":"assets/review_honey_badger_cc0.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Mellivora_capensis.jpg", "license":"CC0", "author":"Nuevocaledonio", "title":"Mellivora capensis honey badger"},
+      "layout":"poster", "setting":"plain", "backgroundMode":"photo", "theme":"newsprint", "photoStyle":"poster", "camera":"push", "motion":"reveal", "titleStyle":"kinetic", "delivery":"reveal", "action":"identity", "soundCue":"boom", "effects":[]
+    },
+    {
+      "factIndex":2, "narration":"Imagine building this incredible food vault, then a furry robber shows up. The bees need better security, buddy!",
+      "line1":"BEE SECURITY?", "line2":"ABSOLUTELY FIRED!", "beatTextHi":"HIVE HEIST!",
+      "visual":"photo", "visualRole":"subject", "subjectEntity":"Apis mellifera on honeycomb",
+      "visualQuery":"bee colony brood comb", "media":"assets/review_comb_1.jpg",
+      "credit":{"source":"https://commons.wikimedia.org/wiki/File:Honey_Bees_on_Comb_2.jpg", "license":"CC0", "author":"Shane Harris / Alabama Extension", "title":"Honey Bees on Comb 2"},
+      "layout":"left", "setting":"plain", "backgroundMode":"photo", "theme":"field-journal", "photoStyle":"clean", "camera":"pan-left", "motion":"slide-left", "titleStyle":"bold", "delivery":"payoff", "action":"none", "soundCue":"ding", "effects":[]
+    }
+  ]
+}

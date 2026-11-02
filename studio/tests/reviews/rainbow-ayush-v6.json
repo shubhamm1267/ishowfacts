@@ -1,0 +1,204 @@
+{
+  "topic": "Rainbow",
+  "voiceAccent": "hi-IN-ayush",
+  "voiceStyle": "energetic",
+  "pitch": 1.19,
+  "fps": 24,
+  "seed": 817205,
+  "editorialReview": "Hook-led full-circle rainbow fact checked using NOAA and UK Met Office. A procedural full spectrum circle illustrates the concept without misidentifying atmospheric glory imagery. Real dual- and mountain-rainbow photos are exact CC BY Commons files; no recurring numbered diagram or irrelevant soil.",
+  "sources": [
+    {
+      "name": "NOAA NESDIS — What Causes a Rainbow",
+      "url": "https://www.nesdis.noaa.gov/about/k-12-education/optical-phenomena/what-causes-rainbow"
+    },
+    {
+      "name": "UK Met Office — Rainbows: optical wonders",
+      "url": "https://weather.metoffice.gov.uk/learn-about/weather/optical-effects/rainbows"
+    }
+  ],
+  "scenes": [
+    {
+      "narration": "ये जो इंद्रधनुष आधा दिखता है ना… असल में इसका पूरा आकार गोल होता है!",
+      "line1": "RAINBOW",
+      "line2": "IS A CIRCLE",
+      "visual": "photo",
+      "media": "assets/image_0.jpg",
+      "photoStyle": "clean",
+      "backgroundMode": "sky",
+      "layout": "hero",
+      "camera": "push",
+      "motion": "reveal",
+      "theme": "newsprint",
+      "delivery": "hook",
+      "soundCue": "question",
+      "effects": [
+        {
+          "type": "flash",
+          "where": "center",
+          "at": 0.38,
+          "intensity": 0.3
+        }
+      ],
+      "callout": "WAIT... FULL CIRCLE?"
+    },
+    {
+      "narration": "फिर नीचे वाला हिस्सा कहां गया? ज़मीन और क्षितिज उसे हमारी नज़र से छिपा लेते हैं!",
+      "line1": "HIDDEN",
+      "line2": "LOWER HALF",
+      "visual": "photo",
+      "media": "assets/curated_mountain_rainbow.jpg",
+      "credit": {
+        "title": "File:Rainbow appears over mountains after rain shower in early evening.jpg",
+        "source": "https://commons.wikimedia.org/wiki/File:Rainbow_appears_over_mountains_after_rain_shower_in_early_evening.jpg",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "author": "Shixart1985"
+      },
+      "photoStyle": "poster",
+      "backgroundMode": "sky",
+      "layout": "right",
+      "camera": "pan-right",
+      "motion": "slide-right",
+      "theme": "cream",
+      "delivery": "suspense",
+      "soundCue": "whoosh",
+      "effects": [
+        {
+          "type": "crosshair",
+          "where": "left",
+          "at": 0.6,
+          "intensity": 0.4
+        }
+      ],
+      "callout": "HORIZON HIDES IT"
+    },
+    {
+      "narration": "हवाई जहाज़ से सही जगह देखो, तो पूरा गोल इंद्रधनुष भी दिख सकता है!",
+      "line1": "360°",
+      "line2": "RAINBOW",
+      "visual": "illustration",
+      "backgroundMode": "sky",
+      "layout": "comparison",
+      "camera": "push",
+      "motion": "static",
+      "theme": "infographic",
+      "delivery": "reveal",
+      "soundCue": "ding",
+      "effects": [
+        {
+          "type": "rainbow",
+          "where": "center",
+          "at": 0.13,
+          "intensity": 1
+        },
+        {
+          "type": "sparkle",
+          "where": "right",
+          "at": 0.75,
+          "intensity": 0.4
+        }
+      ],
+      "callout": "ILLUSTRATION"
+    },
+    {
+      "narration": "सूरज की रोशनी बूंदों में मुड़ती है, अंदर से पलटती है, और रंगों में बंट जाती है!",
+      "line1": "LIGHT",
+      "line2": "BENDS",
+      "visual": "diagram",
+      "backgroundMode": "lab",
+      "layout": "comparison",
+      "camera": "static",
+      "motion": "static",
+      "theme": "blueprint",
+      "delivery": "explain",
+      "soundCue": "ding",
+      "diagram": {
+        "heading": "WHY THE COLOURS?",
+        "style": "orbit",
+        "nodes": [
+          {
+            "label": "SUNLIGHT",
+            "detail": "White sunlight hits droplets"
+          },
+          {
+            "label": "REFLECTION",
+            "detail": "Light turns inside the drop"
+          },
+          {
+            "label": "COLOUR",
+            "detail": "Different colours separate"
+          }
+        ],
+        "links": [
+          {
+            "from": 0,
+            "to": 1,
+            "label": "refraction"
+          },
+          {
+            "from": 1,
+            "to": 2,
+            "label": "dispersion"
+          }
+        ]
+      },
+      "effects": [],
+      "callout": "REFRACT + REFLECT"
+    },
+    {
+      "narration": "और सुनो—बारिश ही ज़रूरी नहीं! धुंध और फुहार से भी इंद्रधनुष बन सकता है!",
+      "line1": "NOT JUST",
+      "line2": "RAIN!",
+      "visual": "photo",
+      "media": "assets/image_1.jpg",
+      "photoStyle": "frame",
+      "backgroundMode": "sky",
+      "layout": "left",
+      "camera": "pan-left",
+      "motion": "float",
+      "theme": "field-journal",
+      "delivery": "reveal",
+      "soundCue": "whoosh",
+      "effects": [
+        {
+          "type": "sparkle",
+          "where": "right",
+          "at": 0.42,
+          "intensity": 0.5
+        }
+      ],
+      "callout": "MIST & SPRAY"
+    },
+    {
+      "narration": "इसलिए अगली बार आधा इंद्रधनुष देखो, तो समझना… बाकी हिस्सा बस छिपा है!",
+      "line1": "HIDDEN",
+      "line2": "CIRCLE!",
+      "visual": "photo",
+      "media": "assets/curated_mountain_rainbow.jpg",
+      "credit": {
+        "title": "File:Rainbow appears over mountains after rain shower in early evening.jpg",
+        "source": "https://commons.wikimedia.org/wiki/File:Rainbow_appears_over_mountains_after_rain_shower_in_early_evening.jpg",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "author": "Shixart1985"
+      },
+      "photoStyle": "clean",
+      "backgroundMode": "sky",
+      "layout": "poster",
+      "camera": "pull",
+      "motion": "reveal",
+      "theme": "dossier",
+      "delivery": "payoff",
+      "soundCue": "boom",
+      "effects": [
+        {
+          "type": "glow",
+          "where": "left",
+          "at": 0.6,
+          "intensity": 0.45
+        }
+      ],
+      "callout": "NATURE'S OPTICS"
+    }
+  ]
+}

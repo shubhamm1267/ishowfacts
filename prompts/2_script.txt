@@ -1,0 +1,8 @@
+Write a 30-40 second Instagram reel voice-over in Hinglish (Roman script) about the <TOPIC>. Structure:
+1) Hook that starts with "Socho ek aisa …" and puts the strangest fact first
+2) "Ye koi movie nahi hai, ye bilkul sach hai"
+3) Its name and size
+4) How it works, in 3 short steps, with one exact number
+5) A twist ending people will want to share
+Short sentences, storytelling tone, max 110 words.
+After the script, list every fact with a source (paper or reliable site) so I can check it.

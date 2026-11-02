@@ -1,0 +1,184 @@
+{
+  "topic": "Tetraodontidae",
+  "voiceAccent": "hi-IN-ayush",
+  "voiceStyle": "energetic",
+  "pitch": 1.19,
+  "fps": 24,
+  "seed": 618204,
+  "editorialReview": "Two real-source fact checks, on-screen organism name, short suspense hook, water-into-stomach proof, non-numbered contrast, vector inflation cue and one clearly playful predator joke. Only verified pufferfish species photos used; unverified net photo and porcupinefish rejected.",
+  "sources": [
+    {
+      "name": "Smithsonian Ocean — Pufferfishes and Their Relatives",
+      "url": "https://ocean.si.edu/ocean-life/fish/pufferfishes-and-their-relatives"
+    },
+    {
+      "name": "Australian Institute of Marine Science — How pufferfish inflate",
+      "url": "https://www.aims.gov.au/information-centre/news-and-stories/03-december-do-pufferfish-hold-their-breath-while-inflated"
+    }
+  ],
+  "scenes": [
+    {
+      "narration": "ये है पफरफिश! शिकारी पास आते ही ये मछली गुब्बारे जैसी फूल सकती है!",
+      "line1": "PUFFERFISH",
+      "line2": "BALLOON MODE",
+      "visual": "photo",
+      "media": "assets/image_0.jpg",
+      "photoStyle": "clean",
+      "backgroundMode": "underwater",
+      "layout": "hero",
+      "camera": "push",
+      "motion": "reveal",
+      "theme": "blueprint",
+      "delivery": "hook",
+      "soundCue": "question",
+      "effects": [
+        {
+          "type": "flash",
+          "where": "center",
+          "at": 0.45,
+          "intensity": 0.3
+        }
+      ],
+      "callout": "REAL FISH!"
+    },
+    {
+      "narration": "क्यों? क्योंकि खतरा देखकर ये मुंह से तेज़ी से पानी निगलती है!",
+      "line1": "GULPS",
+      "line2": "WATER!",
+      "visual": "photo",
+      "media": "assets/image_1.jpg",
+      "photoStyle": "frame",
+      "backgroundMode": "underwater",
+      "layout": "left",
+      "camera": "pan-left",
+      "motion": "slide-left",
+      "theme": "newsprint",
+      "delivery": "suspense",
+      "soundCue": "pop",
+      "effects": [
+        {
+          "type": "bubbles",
+          "where": "left",
+          "at": 0.4,
+          "intensity": 0.6
+        }
+      ],
+      "callout": "THREAT DETECTED"
+    },
+    {
+      "narration": "वो पानी सीधे इसके पेट में भरता है, और शरीर कई गुना बड़ा दिखने लगता है!",
+      "line1": "BELLY",
+      "line2": "EXPANDS",
+      "visual": "diagram",
+      "backgroundMode": "lab",
+      "layout": "comparison",
+      "camera": "static",
+      "motion": "static",
+      "theme": "infographic",
+      "delivery": "explain",
+      "diagram": {
+        "heading": "WHAT MAKES IT PUFF?",
+        "style": "contrast",
+        "nodes": [
+          {
+            "label": "WATER IN",
+            "detail": "Gulps water rapidly"
+          },
+          {
+            "label": "BELLY GROWS",
+            "detail": "Stomach holds the water"
+          }
+        ],
+        "links": [
+          {
+            "from": 0,
+            "to": 1,
+            "label": "inflation"
+          }
+        ]
+      },
+      "effects": [],
+      "soundCue": "pop",
+      "callout": "DEFENCE MECHANISM"
+    },
+    {
+      "narration": "शिकारी सोचता होगा—स्नैक लेने आया था… सामने तो पूरा फुटबॉल आ गया!",
+      "line1": "FOOTBALL?!",
+      "line2": "NOPE, FISH!",
+      "visual": "photo",
+      "media": "assets/image_0.jpg",
+      "photoStyle": "poster",
+      "backgroundMode": "paper",
+      "layout": "right",
+      "camera": "handheld",
+      "motion": "shake",
+      "theme": "dossier",
+      "delivery": "reveal",
+      "soundCue": "boing",
+      "effects": [
+        {
+          "type": "inflate",
+          "where": "center",
+          "at": 0.18,
+          "intensity": 0.8
+        },
+        {
+          "type": "reaction",
+          "where": "left",
+          "text": "shocked",
+          "at": 0.56,
+          "intensity": 0.9
+        }
+      ],
+      "callout": "COMIC REACTION"
+    },
+    {
+      "narration": "ये बड़ा आकार शिकारी के लिए इसे निगलना मुश्किल बनाता है—यही असली बचाव है!",
+      "line1": "BIG",
+      "line2": "DEFENCE",
+      "visual": "photo",
+      "media": "assets/image_3.jpg",
+      "photoStyle": "clean",
+      "backgroundMode": "underwater",
+      "layout": "lower-left",
+      "camera": "pull",
+      "motion": "float",
+      "theme": "field-journal",
+      "delivery": "explain",
+      "soundCue": "thud",
+      "effects": [
+        {
+          "type": "glow",
+          "where": "right",
+          "at": 0.45,
+          "intensity": 0.5
+        }
+      ],
+      "callout": "PREDATOR DEFENCE"
+    },
+    {
+      "narration": "तो पफरफिश कोई जादू नहीं करती… ये अपने पेट को बचाव का गुब्बारा बनाती है!",
+      "line1": "REAL",
+      "line2": "SUPERPOWER",
+      "visual": "photo",
+      "media": "assets/image_5.jpg",
+      "photoStyle": "frame",
+      "backgroundMode": "lab",
+      "layout": "poster",
+      "camera": "push",
+      "motion": "reveal",
+      "theme": "cream",
+      "delivery": "payoff",
+      "soundCue": "whoosh",
+      "effects": [
+        {
+          "type": "sparkle",
+          "where": "left",
+          "at": 0.45,
+          "intensity": 0.85
+        }
+      ],
+      "callout": "NATURE'S TRICK"
+    }
+  ]
+}
