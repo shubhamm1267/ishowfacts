@@ -9,7 +9,8 @@ import {
   writeFile,
   stat,
   readdir,
-  copyFile
+  copyFile,
+  rm
 } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -27,7 +28,8 @@ import {
   inspectImage,
   auditCutout,
   mediaSearchQueries,
-  resolveVoiceProfile
+  resolveVoiceProfile,
+  runWithProviders
 } from './lib/core.mjs';
 
 import {
@@ -62,6 +64,88 @@ let activeJob = null;
 
 const jobs = new Map();
 
+const VIDEO_TTL_MS = 10 * 60 * 1000;
+
+async function expireJob(id) {
+  if (!/^[a-f0-9-]{36}$/i.test(id)) {
+    return;
+  }
+
+  const folder = join(JOBS, id);
+  const statusFile = join(folder, 'status.json');
+
+  let saved;
+
+  try {
+    saved = JSON.parse(
+      await readFile(statusFile, 'utf8')
+    );
+  } catch {
+    return;
+  }
+
+  if (saved.status === 'running') {
+    return;
+  }
+
+  if (activeJob?.id === id) {
+    return;
+  }
+
+  let expiresAt = Date.parse(saved.expiresAt || '');
+
+  if (!Number.isFinite(expiresAt)) {
+    try {
+      const info = await stat(statusFile);
+      expiresAt = info.mtimeMs + VIDEO_TTL_MS;
+    } catch {
+      return;
+    }
+  }
+
+  if (Date.now() < expiresAt) {
+    return;
+  }
+
+  try {
+    await rm(folder, {
+      recursive: true,
+      force: true
+    });
+
+    jobs.delete(id);
+
+    console.log('[CLEANUP] Deleted expired job:', id);
+  } catch (error) {
+    console.error(
+      '[CLEANUP] Could not delete job:',
+      id,
+      error.message
+    );
+  }
+}
+
+async function cleanExpiredJobs() {
+  let entries = [];
+
+  try {
+    entries = await readdir(JOBS, {
+      withFileTypes: true
+    });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (
+      entry.isDirectory() &&
+      /^[a-f0-9-]{36}$/i.test(entry.name)
+    ) {
+      await expireJob(entry.name);
+    }
+  }
+}
+
 function safeJob(job) {
   const {
     id,
@@ -92,6 +176,7 @@ function safeJob(job) {
     demo,
     duration,
     video: !!video,
+    expiresAt: job.expiresAt || null,
 
     videoUrl: video
       ? `/api/jobs/${id}/video`
@@ -184,6 +269,47 @@ export function validateInput(data) {
 
   const demo = data.demo === true;
 
+  const rawKeys = data.providerKeys || {};
+
+  if (
+    typeof rawKeys !== 'object' ||
+    Array.isArray(rawKeys)
+  ) {
+    throw Error('Invalid provider settings');
+  }
+
+  const providerKeys = {};
+
+  const allowedKeys = [
+    'GEMINI_API_KEY',
+    'GEMINI_MODEL',
+    'CARTESIA_API_KEY',
+    'CARTESIA_MODEL',
+    'CARTESIA_VERSION',
+    'FREESOUND_API_KEY'
+  ];
+
+  for (const name of allowedKeys) {
+    const value = rawKeys[name];
+
+    if (
+      value === undefined ||
+      value === null ||
+      value === ''
+    ) {
+      continue;
+    }
+
+    if (
+      typeof value !== 'string' ||
+      value.length > 512
+    ) {
+      throw Error('Invalid setting: ' + name);
+    }
+
+    providerKeys[name] = value.trim();
+  }
+
   if (demo && process.env.DEMO_MODE !== '1') {
     throw Error('Demo mode disabled');
   }
@@ -191,13 +317,12 @@ export function validateInput(data) {
   if (
     !demo &&
     (
-      !process.env.GEMINI_API_KEY ||
-      !process.env.CARTESIA_API_KEY ||
-      !process.env.FREESOUND_API_KEY
+      !(providerKeys.GEMINI_API_KEY || process.env.GEMINI_API_KEY) ||
+      !(providerKeys.CARTESIA_API_KEY || process.env.CARTESIA_API_KEY)
     )
   ) {
     throw Error(
-      'Set GEMINI_API_KEY, CARTESIA_API_KEY and FREESOUND_API_KEY in studio/.env'
+      'Gemini and Cartesia keys are required. Open API Settings.'
     );
   }
 
@@ -209,7 +334,8 @@ export function validateInput(data) {
     voiceStyle,
     humorIntensity,
     backgroundPalette,
-    demo
+    demo,
+    providerKeys
   };
 }
 
@@ -897,9 +1023,7 @@ async function runJob(job, input) {
                   !guidance.matches ||
                   guidance.confidence < .65
                 ) {
-                  job.warnings.push(
-                    `Scene ${i + 1}: photo candidate ${attempt + 1} not verified as '${episode.scenes[i].subjectEntity}'; retrying`
-                  );
+                  // Candidate rejected; silently try the next image.
 
                   continue;
                 }
@@ -1069,7 +1193,13 @@ async function runJob(job, input) {
     const sounds = {};
     const soundCredits = [];
 
-    if (!input.demo) {
+    if (
+      !input.demo &&
+      (
+        input.providerKeys.FREESOUND_API_KEY ||
+        process.env.FREESOUND_API_KEY
+      )
+    ) {
       for (
         const effect of requiredSounds(episode)
       ) {
@@ -1293,6 +1423,34 @@ async function runJob(job, input) {
     if (activeJob?.id === job.id) {
       activeJob = null;
       busy = false;
+    }
+
+    if (job.status !== 'running') {
+      job.expiresAt = new Date(
+        Date.now() + VIDEO_TTL_MS
+      ).toISOString();
+
+      try {
+        await checkpoint(
+          job,
+          job.stage,
+          job.progress
+        );
+      } catch (error) {
+        console.error(
+          '[CLEANUP] Could not save expiry:',
+          error.message
+        );
+      }
+
+      const cleanupTimer = setTimeout(
+        () => {
+          void expireJob(job.id);
+        },
+        VIDEO_TTL_MS + 1500
+      );
+
+      cleanupTimer.unref();
     }
 
     console.log(
@@ -1711,9 +1869,9 @@ export function makeServer() {
             `[JOB ${id}] Started`
           );
 
-          void runJob(
-            job,
-            input
+          void runWithProviders(
+            input.providerKeys,
+            () => runJob(job, input)
           );
 
           sendJSON(
@@ -1757,6 +1915,31 @@ export function makeServer() {
               );
 
               return;
+            }
+          }
+
+          if (
+            job.status === 'running' &&
+            activeJob?.id !== id
+          ) {
+            job.status = 'failed';
+            job.stage = 'Render service restarted';
+            job.error =
+              'Render service restarted before this video finished. Please generate again.';
+            job.expiresAt = new Date(
+              Date.now() + VIDEO_TTL_MS
+            ).toISOString();
+
+            try {
+              await writeFile(
+                join(JOBS, id, 'status.json'),
+                JSON.stringify(safeJob(job), null, 2)
+              );
+            } catch (error) {
+              console.error(
+                '[JOB] Could not update interrupted job:',
+                error.message
+              );
             }
           }
 
@@ -1950,6 +2133,17 @@ if (
       recursive: true
     }
   );
+
+  await cleanExpiredJobs();
+
+  const cleanupInterval = setInterval(
+    () => {
+      void cleanExpiredJobs();
+    },
+    60_000
+  );
+
+  cleanupInterval.unref();
 
   makeServer().listen(
     PORT,

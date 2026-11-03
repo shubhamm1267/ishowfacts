@@ -1,5 +1,22 @@
 import { writeFile, readFile } from 'node:fs/promises';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeDirective } from './director.mjs';
+
+const providerScope = new AsyncLocalStorage();
+
+export function runWithProviders(keys, operation) {
+  return providerScope.run(keys || {}, operation);
+}
+
+function providerValue(name) {
+  const supplied = providerScope.getStore()?.[name];
+
+  if (typeof supplied === 'string' && supplied.trim()) {
+    return supplied.trim();
+  }
+
+  return process.env[name] || '';
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -52,8 +69,8 @@ export async function api(url, init = {}, retries = 2) {
 }
 
 export async function gemini(prompt, imagePath = null) {
-  if (!process.env.GEMINI_API_KEY) throw Error('GEMINI_API_KEY missing in .env');
-  const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  if (!providerValue('GEMINI_API_KEY')) throw Error('GEMINI_API_KEY missing in .env');
+  const model = providerValue('GEMINI_MODEL') || 'gemini-3.5-flash-lite';
   if (!/^[a-z\d.-]+$/i.test(model)) throw Error('Invalid Gemini model');
   const parts = [{ text: prompt }];
   for (const path of (imagePath ? (Array.isArray(imagePath) ? imagePath : [imagePath]) : [])) {
@@ -67,7 +84,7 @@ export async function gemini(prompt, imagePath = null) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const tunedParts = attempt ? [...parts, { text: '\nRETRY: Output one COMPLETE, compact JSON object. End with the final closing brace; no extra commentary or long prose.' }] : parts;
     const response = await api(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: 'POST', headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'x-goog-api-key': providerValue('GEMINI_API_KEY'), 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: tunedParts }], generationConfig: {
         responseMimeType: 'application/json', temperature: attempt ? 0.45 : 0.65,
         maxOutputTokens: attempt ? 14000 : 11000,
@@ -429,7 +446,7 @@ export function isFreesoundCC0(license) {
 }
 
 export async function freesound(effect, dest, storyIntent = '') {
-  if (!process.env.FREESOUND_API_KEY) throw Error('FREESOUND_API_KEY missing in .env');
+  if (!providerValue('FREESOUND_API_KEY')) throw Error('FREESOUND_API_KEY missing in .env');
   const words = { whoosh: 'short whoosh transition', pop: 'small pop', thud: 'soft impact thud',
     question: 'comic question', mpop: 'mouth pop', ding: 'bell ding',
     zap: 'short electric zap', boing: 'cartoon spring boing', squeak: 'comic tiny squeak',
@@ -439,7 +456,7 @@ export async function freesound(effect, dest, storyIntent = '') {
     const u = new URL('https://freesound.org/apiv2/search/text/');
     Object.entries({ query: keyword, filter: 'license:"Creative Commons 0"',
       fields: 'id,name,license,previews,url,duration', page_size: '30' }).forEach(([k, v]) => u.searchParams.set(k, v));
-    const r = await (await api(u, { headers: { Authorization: `Token ${process.env.FREESOUND_API_KEY}` } })).json();
+    const r = await (await api(u, { headers: { Authorization: `Token ${providerValue('FREESOUND_API_KEY')}` } })).json();
     for (const sound of r.results || []) {
       const preview = sound.previews?.['preview-hq-mp3'];
       // Freesound returns the CC0 *URL*, not the human-readable license label.
@@ -462,18 +479,18 @@ export async function freesound(effect, dest, storyIntent = '') {
 }
 
 export async function cartesiaVoice(text, voiceProfile, dest, scene = {}, style = 'energetic') {
-  if (!process.env.CARTESIA_API_KEY) throw Error('Cartesia API key missing in .env');
+  if (!providerValue('CARTESIA_API_KEY')) throw Error('Cartesia API key missing in .env');
   const voice = typeof voiceProfile === 'object' && voiceProfile?.voiceId ? voiceProfile : resolveVoiceProfile(voiceProfile);
   const performance = speechPerformance(scene, style);
-  const body = { model_id: process.env.CARTESIA_MODEL || 'sonic-3.6', transcript: text,
+  const body = { model_id: providerValue('CARTESIA_MODEL') || 'sonic-3.6', transcript: text,
     // Cartesia 2026 API rejects language + locale together. Locale alone
     // selects native language/accent, with the explicit accent as a hint.
     voice: voice.voiceId, locale: voice.locale, accent: voice.accent,
     normalization: voice.language === 'hi' ? 'hi-IN' : 'auto',
     output_format: { container: 'wav', encoding: 'pcm_s16le', sample_rate: 44100 },
     generation_config: { speed: performance.speed, volume: 1.0, emotion: performance.emotion } };
-  const options = { method: 'POST', headers: { Authorization: `Bearer ${process.env.CARTESIA_API_KEY}`,
-    'Cartesia-Version': process.env.CARTESIA_VERSION || '2026-08-14', 'Content-Type': 'application/json' } };
+  const options = { method: 'POST', headers: { Authorization: `Bearer ${providerValue('CARTESIA_API_KEY')}`,
+    'Cartesia-Version': providerValue('CARTESIA_VERSION') || '2026-08-14', 'Content-Type': 'application/json' } };
   let response;
   try { response = await api('https://api.cartesia.ai/tts/bytes', { ...options, body: JSON.stringify(body) }); }
   catch (e) {

@@ -788,7 +788,7 @@ def draw_infographic(canvas, el, elapsed, dark=False):
 
 
 # ---------------------------------------------------------------- cut-out helpers
-SS = 2
+SS = max(1, min(2, int(os.getenv("PAPERDOC_SS", "2"))))
 PAD = 40
 
 
@@ -2147,7 +2147,8 @@ class Reel:
         silent = self.out.with_name("_paperdoc_video.mp4")
         enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                                 "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-                                "-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p",
+                                "-c:v", "libx264", "-preset", os.getenv("PAPERDOC_PRESET", "medium"),
+                                "-crf", os.getenv("PAPERDOC_CRF", "17"), "-pix_fmt", "yuv420p",
                                 str(silent)], stdin=subprocess.PIPE)
         n = int(self.dur * FPS)
         for i in range(n):

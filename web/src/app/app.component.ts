@@ -2,16 +2,17 @@ import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
+import { timeout } from 'rxjs';
 
 interface Job {
   id: string; status: 'running' | 'failed' | 'complete'; stage: string; progress: number;
   title: string; topic: string; error?: string; warnings: string[]; demo?: boolean;
-  videoUrl: string | null; downloadUrl: string | null; duration?: number;
+  videoUrl: string | null; downloadUrl: string | null; duration?: number; expiresAt?: string;
   storyboardUrl: string | null; animationPlanUrl: string | null; contactUrl: string | null;
   sources: { name: string; url: string }[];
 }
 interface Health {
-  ok: boolean; demo: boolean; busy: boolean;
+  ok: boolean; demo: boolean; busy: boolean; activeJobId?: string | null;
   providers: { gemini: boolean; cartesia: boolean; freesound: boolean; images: string };
 }
 
@@ -33,7 +34,81 @@ interface Health {
         <div class="hero-decoration"><div class="paper paper-back"></div><div class="paper paper-front"><span>FILE / 001</span><b>THE WORLD<br>IS WEIRD.</b><div class="art">✳</div><span>100% CURIOUS</span></div></div>
       </section>
 
-      <main class="workspace">
+
+      <div class="settings-nav">
+        <button
+          class="secondary"
+          (click)="showSettings = !showSettings">
+          {{ showSettings ? '← BACK TO STUDIO' : '⚙ API SETTINGS' }}
+        </button>
+      </div>
+
+      <section
+        *ngIf="showSettings"
+        class="panel settings-panel">
+
+        <h2>API Settings</h2>
+
+        <p>
+          Keys are saved only in this browser's localStorage.
+          Gemini and Cartesia are required.
+          Freesound is optional.
+        </p>
+
+        <label>GEMINI API KEY (REQUIRED)</label>
+        <input
+          type="password"
+          [(ngModel)]="settings.GEMINI_API_KEY"
+          autocomplete="off"
+          placeholder="Gemini API key">
+
+        <label>CARTESIA API KEY (REQUIRED)</label>
+        <input
+          type="password"
+          [(ngModel)]="settings.CARTESIA_API_KEY"
+          autocomplete="off"
+          placeholder="Cartesia API key">
+
+        <label>FREESOUND API KEY (OPTIONAL)</label>
+        <input
+          type="password"
+          [(ngModel)]="settings.FREESOUND_API_KEY"
+          autocomplete="off"
+          placeholder="Optional Freesound key">
+
+        <label>GEMINI MODEL (OPTIONAL)</label>
+        <input
+          [(ngModel)]="settings.GEMINI_MODEL"
+          placeholder="Leave blank for server default">
+
+        <label>CARTESIA MODEL (OPTIONAL)</label>
+        <input
+          [(ngModel)]="settings.CARTESIA_MODEL"
+          placeholder="Leave blank for server default">
+
+        <label>CARTESIA VERSION (OPTIONAL)</label>
+        <input
+          [(ngModel)]="settings.CARTESIA_VERSION"
+          placeholder="Leave blank for server default">
+
+        <button
+          class="primary"
+          (click)="saveSettings()">
+          SAVE SETTINGS
+        </button>
+
+        <button
+          class="secondary"
+          (click)="clearSettings()">
+          CLEAR SAVED KEYS
+        </button>
+
+        <p class="config">
+          Do not save API keys on shared computers.
+          Browser localStorage is not encrypted.
+        </p>
+      </section>
+      <main class="workspace" *ngIf="!showSettings">
         <section class="panel controls">
           <div class="panel-heading"><span class="mini-label">01 / CREATE</span><h2>New fact film</h2><p>Leave the topic blank. Gemini Lite will find something fascinating.</p></div>
           <label for="topic">YOUR TOPIC <span>OPTIONAL</span></label>
@@ -48,7 +123,7 @@ interface Health {
           <div class="stack"><span>WHAT'S INSIDE</span><div><span class="chip">✦ Gemini Lite</span><span class="chip">◉ Cartesia</span><span class="chip">♫ Freesound CC0</span><span class="chip">▣ Commons</span><span class="chip">✂ Original JSON Cutout Engine</span></div></div>
           <button class="primary" (click)="generate(false)" [disabled]="working || !allConfigured()"><span>{{ working ? 'GENERATION IN PROGRESS' : '✦  GENERATE VIDEO' }}</span><span>↗</span></button>
           <button *ngIf="health?.demo" class="secondary" (click)="generate(true)" [disabled]="working">TRY OFFLINE RENDER DEMO (no AI/voice)</button>
-          <p *ngIf="health && !allConfigured()" class="config">Add Gemini, Cartesia and Freesound keys to <code>studio/.env</code> to enable live generation.</p>
+          <p *ngIf="!allConfigured()" class="config">Enter Gemini and Cartesia keys in API Settings, or configure them on the backend.</p>
           <p *ngIf="error" class="error">{{ error }}</p>
         </section>
 
@@ -69,35 +144,236 @@ interface Health {
 })
 export class AppComponent implements OnInit, OnDestroy {
   private http = inject(HttpClient);
-  private pollTimer?: ReturnType<typeof setInterval>;
-  health: Health | null = null;
-  topic = ''; voiceAccent = 'hi-IN-ayush'; voiceStyle = 'energetic'; humorIntensity = 'cheeky'; backgroundPalette = 'random'; seconds = 25;
-  job: Job | null = null; error = ''; working = false;
 
-  ngOnInit() { this.http.get<Health>('/api/health').subscribe({ next: h => this.health = h,
-    error: () => this.error = 'Cannot connect to local API. Start studio backend first.' }); }
-  ngOnDestroy() { if (this.pollTimer) clearInterval(this.pollTimer); }
-  allConfigured() { return !!(this.health?.providers.gemini && this.health.providers.cartesia && this.health.providers.freesound); }
-  generate(demo: boolean) {
-    if (this.working) return;
-    this.error = ''; this.job = null; this.working = true;
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.http.post<Job>('/api/jobs', { topic: this.topic, voiceAccent: this.voiceAccent, voiceStyle: this.voiceStyle,
-      humorIntensity: this.humorIntensity,
-      backgroundPalette: this.backgroundPalette,
-      seconds: this.seconds, demo }).subscribe({
-      next: job => { this.job = job; this.pollTimer = setInterval(() => this.refresh(job.id), 1100); this.refresh(job.id); },
-      error: e => { this.working = false; this.error = e.error?.error || 'Could not start the render'; },
+  private pollTimer?: ReturnType<typeof setInterval>;
+  private polling = false;
+  private disconnectCount = 0;
+
+  health: Health | null = null;
+  job: Job | null = null;
+
+  topic = '';
+  voiceAccent = 'hi-IN-ayush';
+  voiceStyle = 'energetic';
+  humorIntensity = 'cheeky';
+  backgroundPalette = 'random';
+  seconds = 25;
+
+  error = '';
+  working = false;
+  showSettings = false;
+
+  settings: Record<string, string> = {
+    GEMINI_API_KEY: '',
+    GEMINI_MODEL: '',
+    CARTESIA_API_KEY: '',
+    CARTESIA_MODEL: '',
+    CARTESIA_VERSION: '',
+    FREESOUND_API_KEY: ''
+  };
+
+  ngOnInit(): void {
+    this.loadSettings();
+
+    this.http.get<Health>('/api/health').subscribe({
+      next: health => {
+        this.health = health;
+
+        if (health.activeJobId) {
+          this.working = true;
+          this.startPolling(health.activeJobId);
+        }
+      },
+      error: () => {
+        this.error =
+          'Backend connection unavailable. Check Render deployment.';
+      }
     });
   }
-  private refresh(id: string) {
-    this.http.get<Job>(`/api/jobs/${id}`).subscribe({ next: job => {
-      this.job = job;
-      if (job.status !== 'running') {
-        this.working = false;
-        if (this.pollTimer) clearInterval(this.pollTimer);
-        if (job.status === 'failed') this.error = job.error || 'Render failed';
+
+  ngOnDestroy(): void {
+    this.stopPolling();
+  }
+
+  private loadSettings(): void {
+    try {
+      const saved = JSON.parse(
+        localStorage.getItem('paperdoc_api_settings') || '{}'
+      );
+
+      for (const key of Object.keys(this.settings)) {
+        if (typeof saved[key] === 'string') {
+          this.settings[key] = saved[key];
+        }
       }
-    }, error: () => { this.working = false; this.error = 'Lost connection with render service'; if (this.pollTimer) clearInterval(this.pollTimer); } });
+    } catch {
+      // Ignore invalid browser storage.
+    }
+  }
+
+  saveSettings(): void {
+    try {
+      localStorage.setItem(
+        'paperdoc_api_settings',
+        JSON.stringify(this.settings)
+      );
+
+      this.showSettings = false;
+      this.error = '';
+    } catch {
+      this.error = 'Could not save settings in this browser.';
+    }
+  }
+
+  clearSettings(): void {
+    localStorage.removeItem('paperdoc_api_settings');
+
+    for (const key of Object.keys(this.settings)) {
+      this.settings[key] = '';
+    }
+  }
+
+  allConfigured(): boolean {
+    const gemini =
+      this.settings['GEMINI_API_KEY'] ||
+      this.health?.providers.gemini;
+
+    const cartesia =
+      this.settings['CARTESIA_API_KEY'] ||
+      this.health?.providers.cartesia;
+
+    return !!(gemini && cartesia);
+  }
+
+  generate(demo: boolean): void {
+    if (this.working) {
+      return;
+    }
+
+    if (!demo && !this.allConfigured()) {
+      this.showSettings = true;
+      this.error = 'Please configure Gemini and Cartesia.';
+      return;
+    }
+
+    this.error = '';
+    this.job = null;
+    this.working = true;
+    this.disconnectCount = 0;
+
+    this.stopPolling();
+
+    this.http.post<Job>(
+      '/api/jobs',
+      {
+        topic: this.topic,
+        voiceAccent: this.voiceAccent,
+        voiceStyle: this.voiceStyle,
+        humorIntensity: this.humorIntensity,
+        backgroundPalette: this.backgroundPalette,
+        seconds: this.seconds,
+        demo,
+        providerKeys: { ...this.settings }
+      }
+    ).pipe(
+      timeout(20000)
+    ).subscribe({
+      next: job => {
+        this.job = job;
+        this.startPolling(job.id);
+      },
+
+      error: error => {
+        this.working = false;
+
+        this.error =
+          error.error?.error ||
+          'Could not start the render. Please retry.';
+      }
+    });
+  }
+
+  private startPolling(id: string): void {
+    this.stopPolling();
+
+    this.working = true;
+    this.disconnectCount = 0;
+
+    this.pollTimer = setInterval(
+      () => this.refresh(id),
+      1500
+    );
+
+    this.refresh(id);
+  }
+
+  private stopPolling(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+  }
+
+  private refresh(id: string): void {
+    if (this.polling) {
+      return;
+    }
+
+    this.polling = true;
+
+    this.http.get<Job>(
+      '/api/jobs/' + id
+    ).pipe(
+      timeout(12000)
+    ).subscribe({
+      next: job => {
+        this.polling = false;
+        this.disconnectCount = 0;
+
+        this.job = job;
+        this.error = '';
+
+        if (job.status === 'running') {
+          return;
+        }
+
+        this.working = false;
+        this.stopPolling();
+
+        if (job.status === 'failed') {
+          this.error =
+            job.error || 'Video generation failed.';
+        }
+      },
+
+      error: response => {
+        this.polling = false;
+
+        if (response.status === 404) {
+          this.working = false;
+          this.stopPolling();
+
+          this.error =
+            'Job not found. It may have expired or the service restarted.';
+
+          return;
+        }
+
+        this.disconnectCount++;
+
+        if (this.disconnectCount >= 120) {
+          this.working = false;
+          this.stopPolling();
+
+          this.error =
+            'Render service has been unavailable for too long. Check Render logs.';
+
+          return;
+        }
+
+        this.error =
+          'Render connection interrupted. Automatically reconnecting...';
+      }
+    });
   }
 }
