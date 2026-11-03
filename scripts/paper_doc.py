@@ -1629,7 +1629,7 @@ class Reel:
     def __init__(self, plan_path):
         global W, H, FPS
         self.path = Path(plan_path).resolve()
-        self.plan = json.loads(self.path.read_text())
+        self.plan = json.loads(self.path.read_text(encoding="utf-8"))
         meta = self.plan["meta"]
         W, H = meta.get("size", [1080, 1920])
         FPS = meta.get("fps", 30)
@@ -2180,7 +2180,7 @@ def fade(clip, fin=0.05, fout=0.3):
 
 # ---------------------------------------------------------------- CLI
 def cmd_words(path, t0=0.0, t1=1e9):
-    words = json.loads(Path(path).read_text())
+    words = json.loads(Path(path).read_text(encoding="utf-8"))
     if isinstance(words, dict) and "transcription" in words:          # raw whisper JSON
         words = [{"w": w["text"].strip(), "s": w["offsets"]["from"] / 1000, "e": w["offsets"]["to"] / 1000}
                  for w in words["transcription"] if w["text"].strip()]
@@ -2251,7 +2251,7 @@ def cmd_selftest(outdir, photo=None):
                  "elements": [{"type": "burst", "text": "PHAT!", "x": 540, "y": 1250, "rot": -5, "anim": "punch"},
                               {"type": "spray", "x": 540, "y": 1500, "dir": 90, "at": 0.1, "sfx": False}]}]}
     path = outdir / "selftest_plan.json"
-    path.write_text(json.dumps(plan, indent=1))
+    path.write_text(json.dumps(plan, indent=1, ensure_ascii=False), encoding="utf-8")
     reel = Reel(path)
     print("sounds from:", "AST BTS library" if SFX_DIR else f"{PACK_SOUNDS} (CC0) + generated")
     reel.render()
