@@ -407,12 +407,13 @@ export async function chooseTopic({history=[],language='hi'}={}) {
   throw Error('Topic selection failed to choose a fresh subject in the requested category');
 }
 
-export async function randomFactsSource({history=[],language='hi'}={}){
+export async function randomFactsSource({history=[],language='hi',onTopicsSelected=async()=>{}}={}){
  const {categories,recent}=topicSelectionContext(history,3);
  const chosen=await gemini(`Choose exactly THREE DIFFERENT subjects for an original fast ${language==='en'?'English':'Hindi'} random-facts Short. ${language==='en'?englishDialogueDirection():hindiDialogueDirection()} Use these REQUIRED CATEGORIES in order, one topic per category: ${JSON.stringify(categories)}. Never repeat an already used subject or rename the same phenomenon. Avoid these recent topics and aliases: ${JSON.stringify(recent.map(row=>({topic:row.topic,url:row.url})))}. Prioritize personal relevance, an unexpected source-supported explanation and a visual reveal over taxonomy or biggest/tallest lists. Prefer concrete subjects with strong Wikipedia evidence and abundant real footage. History may use honest context footage, not invented reconstructions. Avoid made-up viral claims, changing ownership/rates, disputed legends, news, medical/survival advice and fraud accusations. Each subject needs ONE surprising checkable claim. Do not copy a creator's wording. Return JSON {"topics":["exact English Wikipedia article title","another exact title","third exact title"]}. Seed:${crypto.randomUUID()}`);
  const topics=chosen?.topics;
  if(!Array.isArray(topics)||topics.length!==3||topics.some(t=>typeof t!=='string'||t.trim().length<3||t.length>90)||new Set(topics.map(t=>t.toLowerCase().trim())).size!==3)throw Error('Random facts requires three distinct research topics');
  if(topics.some(t=>topicWasUsed(t,history)))throw Error('Random facts repeated a recently used topic');
+ await onTopicsSelected(topics,categories);
  const articles=await Promise.all(topics.map(async(t,i)=>({...await wikipediaSource(t.trim()),category:categories[i]})));
  if(new Set(articles.map(a=>a.url)).size!==3)throw Error('Random topics resolved to the same source');
  if(articles.some(a=>topicWasUsed(a,history)))throw Error('Random facts resolved to a recently used source');

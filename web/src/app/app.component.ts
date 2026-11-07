@@ -6,6 +6,7 @@ import { timeout } from 'rxjs';
 
 interface Job {
   instanceId?: string;
+  selectedTopics?: string[];
   id: string; status: 'running' | 'failed' | 'complete' | 'cancelled'; stage: string; progress: number;
   cancelRequested?: boolean;
   title: string; topic: string; category?: string; error?: string; warnings: string[]; demo?: boolean;
@@ -332,6 +333,7 @@ export class AppComponent implements OnInit, OnDestroy {
       '/api/jobs',
       {
         topic: this.topic,
+        recentTopics:this.recentTopics(),
         factMode: this.factMode,
         voiceAccent: this.voiceAccent,
         voiceProvider: this.voiceProvider,
@@ -369,11 +371,24 @@ export class AppComponent implements OnInit, OnDestroy {
     catch { this.error = 'Copy unavailable. Select the title text or download the TXT file.'; }
   }
 
+  private recentTopics(): string[] {
+    try{
+      const saved=JSON.parse(localStorage.getItem('paperdoc_recent_topics')||'[]');
+      return Array.isArray(saved)?saved.filter((t:unknown):t is string=>typeof t==='string'&&!!t.trim()&&t.length<=140).slice(-100):[];
+    }catch{return [];}
+  }
+
+  private rememberTopics(job:Job): void {
+    const selected=(job.selectedTopics||[]).filter(t=>typeof t==='string'&&!!t.trim()&&t.length<=140);
+    if(!selected.length)return;
+    try{localStorage.setItem('paperdoc_recent_topics',JSON.stringify([...new Set([...this.recentTopics(),...selected])].slice(-100)));}catch{/* Backend history still protects this instance. */}
+  }
+
   cancelGeneration(): void {
     if(!this.job || this.job.status!=='running' || this.cancelling || this.job.cancelRequested)return;
     this.cancelling=true;
     this.http.post<Job>('/api/jobs/'+this.job.id+'/cancel',{}).pipe(timeout(20000)).subscribe({
-      next:job=>{this.job=job;this.cancelling=false;if(job.status!=='running'){this.working=false;this.stopPolling();}},
+      next:job=>{this.rememberTopics(job);this.job=job;this.cancelling=false;if(job.status!=='running'){this.working=false;this.stopPolling();}},
       error:response=>{this.cancelling=false;this.error=response.error?.error||'Could not cancel. Please retry.';}
     });
   }
@@ -439,6 +454,7 @@ export class AppComponent implements OnInit, OnDestroy {
         this.polling = false;
         this.disconnectCount = 0;
         this.missingJobCount = 0;
+        this.rememberTopics(job);
 
         this.job = job;
         this.error = '';

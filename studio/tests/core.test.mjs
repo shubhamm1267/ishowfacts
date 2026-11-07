@@ -5,7 +5,7 @@ import { normalizeEpisode, validateThreeFacts, licenseInfo, isFreesoundCC0, buil
   mediaTitleMismatch, randomFactsSource, runWithProviders, wikipediaSource,
   chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES,generationFetch,createWikimediaGate,wikimediaRetryMs } from '../lib/core.mjs';
 import { validateInput,VIDEO_TTL_MS,expireJob,normalizeFrontendOrigin,makeServer,processTool } from '../server.mjs';
-import {mkdir,writeFile,stat} from 'node:fs/promises';
+import {mkdir,writeFile,stat,readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -58,6 +58,7 @@ test('cancellation aborts provider fetches and renderer processes without affect
 
 test('cancel endpoint stops active work, persists cancelled status and releases the generation slot',async()=>{
  const saved=globalThis.fetch,server=makeServer();let entered,aborted=false;
+ const attemptedTopic='Cancellation topic '+randomUUID();
  const ready=new Promise(resolve=>entered=resolve);
  await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const base='http://127.0.0.1:'+server.address().port;
  globalThis.fetch=async(url,options)=>{
@@ -67,7 +68,7 @@ test('cancel endpoint stops active work, persists cancelled status and releases 
   });
  };
  try{
-  const response=await saved(base+'/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:'Cancellation integration test',voiceProvider:'fish',providerKeys:{GEMINI_API_KEY:'test',FISH_API_KEY:'test'}})});
+  const response=await saved(base+'/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:attemptedTopic,voiceProvider:'fish',providerKeys:{GEMINI_API_KEY:'test',FISH_API_KEY:'test'}})});
   assert.equal(response.status,202);const job=await response.json();await ready;
   const cancel=await saved(base+'/api/jobs/'+job.id+'/cancel',{method:'POST'});assert.equal(cancel.status,202);
   assert.equal((await cancel.json()).cancelRequested,true);
@@ -77,10 +78,18 @@ test('cancel endpoint stops active work, persists cancelled status and releases 
    await new Promise(r=>setTimeout(r,20));
   }
   assert.equal(status.status,'cancelled');assert.equal(aborted,true);assert.equal(status.videoUrl,null);
+  assert.deepEqual(status.selectedTopics,[attemptedTopic]);
+  const history=JSON.parse(await readFile(new URL('../data/topic-history.json',import.meta.url),'utf8'));
+  assert.equal(topicWasUsed(attemptedTopic,history),true,'cancelled research remains excluded before any footage search');
   for(let i=0;i<50;i++){if(!(await(await saved(base+'/api/health')).json()).busy)break;await new Promise(r=>setTimeout(r,20));}
   assert.equal((await(await saved(base+'/api/health')).json()).busy,false);
   assert.equal((await saved(base+'/api/jobs/'+job.id+'/cancel',{method:'POST'})).status,200);
- }finally{globalThis.fetch=saved;await new Promise(ok=>server.close(ok));}
+ }finally{
+  globalThis.fetch=saved;await new Promise(ok=>server.close(ok));
+  const path=new URL('../data/topic-history.json',import.meta.url);
+  const history=JSON.parse(await readFile(path,'utf8'));
+  await writeFile(path,JSON.stringify(history.filter(row=>row.topic!==attemptedTopic),null,2));
+ }
 });
 
 test('deployment origin normalization tolerates copied quotes and trailing slashes without allowing other sites',async()=>{
@@ -116,6 +125,13 @@ test('random fact mode is explicit and unknown modes retain topic research',()=>
  const providerKeys={GEMINI_API_KEY:'test',CARTESIA_API_KEY:'test'};
  assert.equal(validateInput({providerKeys,factMode:'random'}).factMode,'random');
  assert.equal(validateInput({providerKeys,factMode:'unknown'}).factMode,'topic');
+});
+
+test('browser topic exclusions are bounded and survive input validation without requiring server history',()=>{
+ const providerKeys={GEMINI_API_KEY:'test',CARTESIA_API_KEY:'test'};
+ const input=validateInput({providerKeys,recentTopics:[' Popcorn ','Popcorn','Soap bubble']});
+ assert.deepEqual(input.recentTopics,['Popcorn','Soap bubble']);
+ for(const recentTopics of ['Popcorn',[{}],Array(101).fill('Popcorn')])assert.throws(()=>validateInput({providerKeys,recentTopics}),/Recent topics/);
 });
 
 test('automatic selection cycles all categories and reserves different categories for compilations',()=>{

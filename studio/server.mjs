@@ -201,6 +201,7 @@ function safeJob(job) {
   return {
     id,
     instanceId,
+    selectedTopics:job.selectedTopics||[],
     status,
     cancelRequested:!!job.cancelRequested,
     youtubeTitle: job.youtubeTitle || null,
@@ -384,8 +385,12 @@ export function validateInput(data) {
   }
 
   const logoDataUrl=validateLogoUpload(data.logoDataUrl);
+  const recentTopics=data.recentTopics||[];
+  if(!Array.isArray(recentTopics)||recentTopics.length>100||recentTopics.some(t=>typeof t!=='string'||!t.trim()||t.length>140))
+    throw Error('Recent topics must contain at most 100 topic names');
   return {
     topic,
+    recentTopics:[...new Set(recentTopics.map(t=>t.trim()))],
     language,
     factMode:data.factMode==='random'?'random':'topic',
     seconds,
@@ -931,15 +936,33 @@ async function runJob(job, input) {
         }
       }
     }
+    // The browser's compact history also survives an ephemeral Render restart.
+    for(const topic of input.recentTopics||[])if(!topicWasUsed(topic,topicHistory))topicHistory.push({topic,category:'custom',origin:'browser-history'});
+    const attemptedTopics=[];
+    const saveTopicHistory=async entries=>{
+      await mkdir(dirname(topicHistoryPath),{recursive:true});
+      const pendingHistory=topicHistoryPath+'.'+job.id+'.tmp';
+      await writeFile(pendingHistory,JSON.stringify([...topicHistory,...attemptedTopics,...entries],null,2));
+      await rename(pendingHistory,topicHistoryPath);
+    };
+    const rememberSelection=async(titles,categories)=>{
+      job.selectedTopics=[...new Set([...(job.selectedTopics||[]),...titles])];
+      attemptedTopics.push(...titles.map((topic,i)=>({topic,category:categories[i]?.id||'custom',createdAt:new Date().toISOString(),origin:'generation-attempt'})));
+      // Reserve before research: failure/cancellation must not select it again.
+      await saveTopicHistory([]);
+      await checkpoint(job,'Researching selected topics',8);
+    };
     let topic,source;
     if(input.demo){topic='Octopus';source={title:'Offline demonstration',url:null};}
     else if(input.factMode==='random'){
-      source=await randomFactsSource({history:topicHistory,language:input.language});
+      source=await randomFactsSource({history:topicHistory,language:input.language,onTopicsSelected:rememberSelection});
       topic='Random facts: '+source.articles.map(a=>a.title).join(', ');
     }else{
       for(let attempt=0;attempt<3;attempt++){
-        const candidate=input.topic||await chooseTopic({history:topicHistory,language:input.language});
+        const category=topicSelectionContext(topicHistory).categories[0];
+        const candidate=input.topic||await chooseTopic({history:[...topicHistory,...attemptedTopics],language:input.language});
         if(input.topic&&topicWasUsed(candidate,topicHistory))throw Error('This topic has already been used. Choose a new subject.');
+        await rememberSelection([candidate],[category]);
         const researched=await wikipediaSource(candidate);
         if(input.topic&&topicWasUsed(researched,topicHistory))throw Error('This topic has already been used. Choose a new subject; changing its title or language does not make it new.');
         if(!topicWasUsed(researched,topicHistory)){
@@ -950,7 +973,14 @@ async function runJob(job, input) {
       if(!source)throw Error('Automatic topic selection resolved to a recently used source');
     }
     job.topic=topic;
+    job.selectedTopics=[...new Set([...(job.selectedTopics||[]),...(source.articles||[source]).map(article=>article.title)])];
     job.category=source.articles?source.articles.map(a=>a.category.label).join(' / '):source.category?.label||null;
+
+    if(!input.demo){
+      const entries=(source.articles||[source]).map(article=>({topic:article.title,url:article.url,category:article.category?.id||'custom',createdAt:new Date().toISOString()}));
+      await saveTopicHistory(entries);
+      await writeFile(join(folder,'topic-selection.json'),JSON.stringify({automatic:!input.topic||input.factMode==='random',category:job.category,historyCount:topicHistory.length,duplicateCheck:'full permanent history before drafting',recentTopics:topicHistory.slice(-60).map(row=>row.topic),attempted:attemptedTopics,selected:entries},null,2));
+    }
 
     await checkpoint(
       job,
@@ -965,14 +995,6 @@ async function runJob(job, input) {
       try{const saved=JSON.parse(await readFile(join(JOBS,'.hook-history.json'),'utf8'));if(Array.isArray(saved))hookHistory=saved.filter(r=>typeof r?.opening==='string').slice(-20);}catch{/* First run or deleted history. */}
     }
 
-    if(!input.demo){
-      const entries=(source.articles||[source]).map(article=>({topic:article.title,url:article.url,category:article.category?.id||'custom',createdAt:new Date().toISOString()}));
-      await mkdir(dirname(topicHistoryPath),{recursive:true});
-      const pendingHistory=topicHistoryPath+'.'+job.id+'.tmp';
-      await writeFile(pendingHistory,JSON.stringify([...topicHistory,...entries],null,2));
-      await rename(pendingHistory,topicHistoryPath);
-      await writeFile(join(folder,'topic-selection.json'),JSON.stringify({automatic:!input.topic||input.factMode==='random',category:job.category,historyCount:topicHistory.length,duplicateCheck:'full permanent history before drafting',recentTopics:topicHistory.slice(-60).map(row=>row.topic),selected:entries},null,2));
-    }
     const hookContext=hookContextFor(hookHistory.filter(row=>(row.language||'hi')===input.language));
     if(strictMedia&&process.env.ENABLE_STOCK_VIDEO==='0')throw Error('Enable stock video for video-first generation');
     const episode = input.demo
