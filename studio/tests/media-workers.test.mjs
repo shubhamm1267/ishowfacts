@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {runSceneWorkers,mediaBudget,assignMediaTypes,mediaBudgetIssues,createProcessLimiter} from '../lib/media-workers.mjs';
+import {runSceneWorkers,mediaBudget,assignMediaTypes,mediaBudgetIssues,createProcessLimiter,resourceBudget} from '../lib/media-workers.mjs';
 import {commonsImage} from '../lib/core.mjs';
 import {mkdtemp} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Resvg} from '@resvg/resvg-js';
+
+test('small containers serialize heavy media work and bound encoder threads',()=>{
+ for(const mib of [256,512,1024])assert.deepEqual(resourceBudget(mib*1048576),{lowMemory:true,processConcurrency:1,mediaConcurrency:1,ffmpegThreads:1});
+ assert.deepEqual(resourceBudget(2048*1048576),{lowMemory:false,processConcurrency:3,mediaConcurrency:3,ffmpegThreads:2});
+});
 
 test('process limiter caps concurrent child work and releases a failed slot for queued work',async()=>{
  const limit=createProcessLimiter(3);let active=0,peak=0;const gates=[];

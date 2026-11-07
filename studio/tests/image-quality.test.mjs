@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {imageDimensions,highQualityImage} from '../lib/image-quality.mjs';
+import {imageDimensions,highQualityImage,readImageBytes} from '../lib/image-quality.mjs';
 import {Resvg} from '@resvg/resvg-js';
+
+test('photo downloads stop oversized streaming bodies before buffering the complete file',async()=>{
+ await assert.rejects(readImageBytes(new Response('small',{headers:{'Content-Length':'100'}}),10),/download limit/);
+ let cancelled=false;
+ const body=new ReadableStream({pull(c){c.enqueue(new Uint8Array(6));},cancel(){cancelled=true;}});
+ await assert.rejects(readImageBytes(new Response(body),10),/download limit/);assert.equal(cancelled,true);
+ assert.equal((await readImageBytes(new Response('photo'),10)).toString(),'photo');
+});
 test('actual raster dimensions reject small sources despite claimed thumbnail metadata',()=>{
  const small=new Resvg('<svg xmlns="http://www.w3.org/2000/svg" width="340" height="281"/>').render().asPng();
  assert.deepEqual(imageDimensions(small),{width:340,height:281});assert.equal(highQualityImage(imageDimensions(small)),false);

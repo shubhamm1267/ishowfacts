@@ -4,7 +4,7 @@ import {verificationGemini} from './core.mjs';
 import {shotReview,renderedIssues} from './quality.mjs';
 import {runSceneWorkers} from './media-workers.mjs';
 
-export function framingReviewer({run,python,root,assets,fit='cover'}){
+export function framingReviewer({run,python,root,assets,fit='cover',onReject=()=>{}}){
  return async(paths,scene,topic,id)=>{
   const folder=join(assets,'visual-review-'+id);await mkdir(folder,{recursive:true});
   async function crop(mode,focus,label){
@@ -20,11 +20,12 @@ export function framingReviewer({run,python,root,assets,fit='cover'}){
   const review=await verificationGemini(`SHOT AND PORTRAIT FRAMING REVIEW. ${context} First ${paths.length} images are original sources in order. Next ${paths.length} images are their ACTUAL portrait crops in the same order. Return one record for each source/crop pair. focus is the center of the true subject in ORIGINAL coordinates, fractions 0-1. cropVisible and requiredFeatureVisible describe the portrait version, not the original. If an off-center subject was lost, say cropVisible=false and locate it in the source; use needsContain=true only when two required actors cannot both fit portrait. ${schema}`, [...paths,...initial],1);
   await writeFile(join(folder,'initial.json'),JSON.stringify(review,null,2));
   const result=shotReview(review,paths.length,{requireClean:true});
-  if(!result.sourceApproved)return null;
+  const reject=message=>{onReject({id,reason:message});return null;};
+  if(!result.sourceApproved)return reject([...new Set((Array.isArray(review.frames)?review.frames:[]).map(row=>row?.reason).filter(reason=>typeof reason==='string'))].join('; ').slice(0,500)||'Source failed entity, relevance or cleanliness verification');
   const centered=[{at:0,point:[.5,.5]}];
   if(result.cropApproved&&(!result.focus.length||result.focus.every(f=>f.point.every(v=>Math.abs(v-.5)<.1))))
    return {subjectFocus:centered,mediaFit:fit,visualReview:folder};
-  if(!result.focus.length&&!result.contain)return null;
+  if(!result.focus.length&&!result.contain)return reject('Subject framing could not be verified');
   const modes=result.contain?['contain']:['cover','contain'];
   for(const mode of modes){
    const images=await crop(mode,result.focus,'repair-'+mode);
@@ -34,7 +35,7 @@ export function framingReviewer({run,python,root,assets,fit='cover'}){
   }
   // Preserve an already approved center crop if a proposed focus repair fails.
   if(result.cropApproved)return {subjectFocus:centered,mediaFit:fit,visualReview:folder};
-  return null;
+  return reject('Subject or required action is not visible in a verified portrait crop');
  };
 }
 

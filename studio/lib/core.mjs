@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeDirective } from './director.mjs';
 import { normalizePointOut, focusTracks, normalizeHookTitle, prepareFocusReview, layoutHeadline } from './reference-style.mjs';
 import {visibleText,hindiTextIssues} from './hindi-quality.mjs';
-import {imageDimensions,highQualityImage} from './image-quality.mjs';
+import {imageDimensions,highQualityImage,readImageBytes} from './image-quality.mjs';
 import {editorialIssues,repairReviewed,QualityError,narrationIssues,reviewFailureDetails} from './quality.mjs';
 import {createKeyScheduler} from './media-workers.mjs';
 
@@ -362,10 +362,18 @@ export function mediaSearchQueries(scene, source, topic) {
   // the scene noun before exhausting the broad article-name fallback.
   const contextual = stripped && subject && subject.length < 46 &&
     !stripped.toLowerCase().includes(subject.toLowerCase()) ? `${subject} ${stripped}` : null;
-  const order = scene.visual === 'cutout'
+  const order = scene.visualRole==='context'
+    ? [brief(scene.subjectEntity,75),subject,visual,stripped,contextual,genus]
+    : scene.visual === 'cutout'
     ? [stripped, contextual, genus, subject, visual]
     : [visual, contextual, stripped, subject, genus];
   return [...new Set(order.filter(x => x && x.length >= 3))];
+}
+
+export function mediaVideoQuery(scene,source,topic){
+ return scene.visualRole==='context'
+  ? brief(scene.subjectEntity||source?.title||scene.videoQuery||scene.visualQuery||topic,90)
+  : brief(scene.videoQuery||scene.visualQuery||scene.subjectEntity||source?.title||topic,90);
 }
 
 export const TOPIC_CATEGORIES=Object.freeze([
@@ -769,9 +777,9 @@ export async function commonsImage(query, dest, alreadyUsed = new Set(), {lookup
     try {
       const response = await api(candidate, {timeoutMs:10_000}, 0);
       if (!officialCDNs.has(new URL(response.url).hostname)) continue;
-      const bytes = Buffer.from(await response.arrayBuffer());
+      const bytes = await readImageBytes(response);
       if (bytes.length < 1000 || bytes.length > 8_000_000) continue;
-      const dimensions=imageDimensions(bytes);if(!highQualityImage(dimensions))continue;
+      const dimensions=imageDimensions(bytes);if(!highQualityImage(dimensions)||dimensions.width*dimensions.height>12_000_000)continue;
       await writeFile(dest, bytes);
       return { file: dest, title: page.title,...dimensions,
         source: `https://commons.wikimedia.org/wiki/${encodeURIComponent(page.title.replaceAll(' ', '_'))}`, ...credit };
@@ -808,11 +816,11 @@ export async function openverseImage(query, dest, alreadyUsed = new Set(), {look
       const resolved = new URL(response.url);
       if (resolved.protocol !== 'https:' || !resolved.hostname.includes('.') ||
           /^(?:localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|\[|0\.)/i.test(resolved.hostname)) continue;
-      const bytes = Buffer.from(await response.arrayBuffer());
+      const bytes = await readImageBytes(response);
       const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
       const png = bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
       if ((!jpeg && !png) || bytes.length < 3000 || bytes.length > 8_000_000) continue;
-      const dimensions=imageDimensions(bytes);if(!highQualityImage(dimensions))continue;
+      const dimensions=imageDimensions(bytes);if(!highQualityImage(dimensions)||dimensions.width*dimensions.height>12_000_000)continue;
       await writeFile(dest, bytes);
       return { file: dest, title: item.title || query, ...dimensions,source: item.foreign_landing_url ||
         item.detail_url || 'https://openverse.org/', author: item.creator || 'Unknown',

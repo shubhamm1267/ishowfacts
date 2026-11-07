@@ -1,10 +1,11 @@
-import { copyFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, rename, rm, stat,writeFile } from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
 import {Readable,Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import { providerValue,licenseInfo,mediaTitleMismatch,generationFetch,checkGenerationCancelled } from './core.mjs';
+import {imageDimensions,highQualityImage,readImageBytes} from './image-quality.mjs';
 
 const MAX = () => Math.min(120, Math.max(5, Number(process.env.STOCK_VIDEO_MAX_MB) || 80)) * 1024 * 1024;
 const allowed = host => ['vecteezy.com', 'mixkit.co', 'pexels.com', 'coverr.co'].some(d => host === d || host.endsWith('.' + d))||['commons.wikimedia.org','upload.wikimedia.org'].includes(host);
@@ -188,6 +189,42 @@ export function syntheticStock(title=''){
  return /\b(?:cartoon|animat(?:ed|ion)|illustrat(?:ed|ion)|3d|cgi|render(?:ed|ing)?|motion graphics?|seamless loop|alpha channel|transparent background|striped background|abstract|gradient background|background pattern|geometric pattern)\b/i.test(title);
 }
 
+export async function stockPhoto(query,dest,{used=new Set(),session=createStockSession()}={}){
+ checkGenerationCancelled();
+ const apiKey=providerValue('PEXELS_API_KEY');if(!apiKey)return null;
+ const url=new URL('https://api.pexels.com/v1/search');
+ url.searchParams.set('query',normalizedQuery(query));url.searchParams.set('per_page','12');
+ const row={provider:'Pexels Photos',query:normalizedQuery(query),status:'searching',results:0};
+ session.metrics.searches.push(row);
+ let data;
+ try{data=await providerSearch(session,'pexels-photo:'+digest(apiKey),'pexels-photo:'+digest(apiKey)+':'+url,async()=>(await request(url,{Authorization:apiKey})).json());}
+ catch(error){row.status='unavailable';throw error;}
+ row.results=(data.photos||[]).length;row.status='searched';
+ let attempts=0,failure;
+ for(const photo of data.photos||[]){
+  const id='pexels-photo:'+photo.id;
+  if(used.has(id)||!photo.url||syntheticStock(photo.alt)||!highQualityImage(photo))continue;
+  // large2x retains HD detail without decoding an unbounded camera original.
+  let address;try{address=new URL(photo.src?.large2x);}catch{continue;}
+  if(address.protocol!=='https:'||address.hostname!=='images.pexels.com'||address.username||address.password)continue;
+  // Default large2x portraits can be only 1300px tall. Request an uncropped
+  // bounded HD rendition instead of rejecting them or fetching the huge original.
+  for(const [name,value]of Object.entries({w:'1920',h:'1920',dpr:'1',fit:'max'}))address.searchParams.set(name,value);
+  if(attempts++>=2)break;used.add(id);
+  try{
+   const response=await request(address,{},15000);
+   const bytes=await readImageBytes(response),dimensions=imageDimensions(bytes);
+   if(bytes.length<1000||!highQualityImage(dimensions)||dimensions.width*dimensions.height>12_000_000)continue;
+   await mkdir(dirname(dest),{recursive:true});await writeFile(dest,bytes);
+   row.status='selected';
+   return {id,openverseId:id,file:dest,title:photo.alt||'Pexels photo '+photo.id,provider:'Pexels',source:photo.url,
+    ...dimensions,allowed:true,license:'Pexels License',licenseUrl:'https://www.pexels.com/license/',author:photo.photographer||'Pexels creator',requiresAttribution:false};
+  }catch(error){checkGenerationCancelled();failure=error;}
+ }
+ if(failure)throw failure;
+ return null;
+}
+
 export async function stockVideo(query, dest, { used = new Set(), inspect,subject='',seconds=7,session=createStockSession() } = {}) {
   checkGenerationCancelled();
   const account = providerValue('VECTEEZY_ACCOUNT_ID'), key = providerValue('VECTEEZY_API_KEY');
@@ -229,7 +266,7 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
           if(used.has(`vecteezy:${item.id}`))return null;
           used.add(`vecteezy:${item.id}`);
           const source = `https://www.vecteezy.com/video/${item.id}`;
-          const page = await stockLookup(session,scope()+':'+source,()=>textPage(source));
+          const page = await providerSearch(session,'vecteezy-pages:'+scope(),scope()+':'+source,()=>textPage(source));
           if (!vecteezyFree(page)) return null;
           let author = '';
           for (const block of page.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -259,7 +296,7 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
   async function reviewCandidates() {
     // Bound expensive downloads/reviews before falling back to a checked photo.
     // This is per provider; Mixkit remains available after Vecteezy candidates.
-    const limit=Math.min(5,Math.max(1,Number(process.env.STOCK_VIDEO_CANDIDATES)||2));
+    const limit=Math.min(5,Math.max(1,Number(process.env.STOCK_VIDEO_CANDIDATES)||(currentSearch.provider==='Pexels'?4:2)));
     let attempts=0;
     currentSearch.candidates=candidates.length;
     for (const {id,acquire} of candidates.splice(0)) {

@@ -1,3 +1,8 @@
+export function resourceBudget(memoryBytes){
+ const lowMemory=Number.isFinite(memoryBytes)&&memoryBytes>0&&memoryBytes<=1024*1024*1024;
+ return {lowMemory,processConcurrency:lowMemory?1:3,mediaConcurrency:lowMemory?1:3,ffmpegThreads:lowMemory?1:2};
+}
+
 export async function runSceneWorkers(count,concurrency,operation){
  const results=new Array(count);let next=0;
  const worker=async()=>{while(next<count){const i=next++;results[i]=await operation(i);}};

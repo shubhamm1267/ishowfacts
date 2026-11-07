@@ -56,7 +56,7 @@ def bounded_ffmpeg(args):
     """Bound decoder/filter pools independently of the host CPU count."""
     if args and isinstance(args[0], (list, tuple)) and Path(args[0][0]).name.lower() in ("ffmpeg", "ffmpeg.exe"):
         command = list(args[0])
-        command[1:1] = ["-threads", "2", "-filter_threads", "1", "-filter_complex_threads", "1"]
+        command[1:1] = ["-threads", os.getenv("PAPERDOC_THREADS", "2"), "-filter_threads", "1", "-filter_complex_threads", "1"]
         return (command, *args[1:])
     return args
 
@@ -2128,9 +2128,12 @@ class Reel:
             # small per-render cache rather than retaining video frame images.
             key = str(path)
             if key not in self.reference_still_cache:
-                if len(self.reference_still_cache) >= 4:
-                    self.reference_still_cache.pop(next(iter(self.reference_still_cache)))
+                for cached in self.reference_still_cache.values():
+                    cached.close()
+                self.reference_still_cache.clear()
                 with Image.open(path) as original:
+                    original.draft("RGB", (2560, 2560))
+                    original.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
                     self.reference_still_cache[key] = original.convert("RGB")
             source = self.reference_still_cache[key]
         top = self.meta.get("headline_height", 164) if self.meta.get("headline_hi") else 0
@@ -2278,13 +2281,13 @@ class Reel:
                            "acompressor=threshold=0.125:ratio=3:attack=5:release=75:makeup=1.4"]
                 if pitch:
                     filters.insert(0, f"rubberband=pitch={2**(pitch/12):.6f}")
-            self.put(mix, self.load_audio(self.resolve(self.meta["voice"]), extra_af=','.join(filters) or None), self.meta.get("voice_at", 0.0))
+            self.put(mix, self.load_audio(self.resolve(self.meta["voice"]), dur=self.dur, extra_af=','.join(filters) or None), self.meta.get("voice_at", 0.0))
         mu = self.meta.get("music")
         if mu:
             path = self.resolve(mu["file"]) if mu.get("file") else None
             if path is not None and path.exists():
                 af = f"atempo={mu['atempo']}" if mu.get("atempo") else None
-                m = self.load_audio(path, mu.get("start", 0), None, af)
+                m = self.load_audio(path, mu.get("start", 0), self.dur, af)
             else:
                 if path is not None:
                     print(f"  music not found ({path.name}) -> generated drone")
@@ -2364,7 +2367,7 @@ class Reel:
         enc = popen_hidden(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                                 "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
                                 *canvas_filter, "-c:v", "libx264", "-preset", os.getenv("PAPERDOC_PRESET", "veryfast"),
-                                "-threads", "2",
+                                "-threads", os.getenv("PAPERDOC_THREADS", "2"),
                                 "-crf", os.getenv("PAPERDOC_CRF", "17"), "-pix_fmt", "yuv420p",
                                 str(silent)], stdin=subprocess.PIPE)
         n = int(self.dur * FPS)

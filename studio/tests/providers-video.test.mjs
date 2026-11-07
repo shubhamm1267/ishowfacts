@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gemini, runWithProviders, demoEpisode, wikipediaSource,commonsImage,openverseImage,inspectVideoFrames } from '../lib/core.mjs';
-import { mixkitItem, vecteezyFree, syntheticStock, stockVideo,createStockSession,createStockMediaCache,prefetchStockVideo,stockFile,stockLookup,commonsVideo,uploadDescription,moveCreditsToDescription } from '../lib/stock-video.mjs';
+import { mixkitItem, vecteezyFree, syntheticStock, stockVideo,stockPhoto,createStockSession,createStockMediaCache,prefetchStockVideo,stockFile,stockLookup,commonsVideo,uploadDescription,moveCreditsToDescription } from '../lib/stock-video.mjs';
+import {Resvg} from '@resvg/resvg-js';
 import {mkdtemp,readFile,writeFile,readdir,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -332,6 +333,40 @@ test('access-denied searches skip repeated calls within a job while every fallba
   assert.equal(session.metrics.searches.length,10);
   assert.ok(session.metrics.searches.every(row=>typeof row.query==='string'));
   assert.doesNotMatch(JSON.stringify(session.metrics),/Authorization|Bearer|api_key/);
+ }finally{globalThis.fetch=saved;}
+});
+
+test('Pexels photos use bounded HD images, preserve licensing and verify actual dimensions',async()=>{
+ const saved=globalThis.fetch,folder=await mkdtemp(join(tmpdir(),'pexels-photo-'));let downloads=0;
+ const small=new Resvg('<svg xmlns="http://www.w3.org/2000/svg" width="340" height="281"/>').render().asPng();
+ const hd=new Resvg('<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1920"/>').render().asPng();
+ try{
+  globalThis.fetch=async(address,options)=>{
+   const url=new URL(address);
+   if(url.hostname==='api.pexels.com'){
+    assert.equal(options.headers.Authorization,'secret');assert.equal(url.pathname,'/v1/search');
+    return Response.json({photos:[1,2].map(id=>({id,width:6000,height:8000,url:'https://www.pexels.com/photo/'+id,alt:'Popcorn',photographer:'Creator',src:{large2x:'https://images.pexels.com/'+id+'.jpg'}}))});
+   }
+   assert.equal(url.hostname,'images.pexels.com');assert.deepEqual(options.headers,{});assert.equal(url.searchParams.get('fit'),'max');assert.equal(url.searchParams.get('h'),'1920');
+   downloads++;return new Response(downloads===1?small:hd);
+  };
+  const photo=await runWithProviders({PEXELS_API_KEY:'secret'},()=>stockPhoto('popcorn',join(folder,'photo.jpg')));
+  assert.equal(downloads,2);assert.equal(photo.id,'pexels-photo:2');assert.equal(photo.height,1920);
+  assert.equal(photo.license,'Pexels License');assert.equal(photo.author,'Creator');
+ }finally{globalThis.fetch=saved;}
+});
+
+test('Pexels tries four candidates when the first three fail visual inspection',async()=>{
+ const saved=globalThis.fetch,folder=await mkdtemp(join(tmpdir(),'pexels-four-')),bytes=Buffer.alloc(2000);bytes.write('ftyp',4);let inspected=0;
+ try{
+  globalThis.fetch=async address=>{
+   const host=new URL(address).hostname;
+   if(host==='mixkit.co')return new Response('');
+   if(host==='api.pexels.com')return Response.json({videos:[1,2,3,4].map(id=>({id,url:'https://www.pexels.com/video/popcorn-'+id,user:{name:'Creator'},video_files:[{file_type:'video/mp4',width:1920,height:1080,link:'https://videos.pexels.com/'+id+'.mp4'}]}))});
+   return new Response(bytes);
+  };
+  const clip=await runWithProviders({PEXELS_API_KEY:'secret'},()=>stockVideo('popcorn',join(folder,'clip.mp4'),{inspect:async()=>++inspected===4?{verified:true}:null}));
+  assert.equal(inspected,4);assert.equal(clip.id,'pexels:4');
  }finally{globalThis.fetch=saved;}
 });
 

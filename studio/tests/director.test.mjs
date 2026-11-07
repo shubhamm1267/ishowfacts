@@ -1,10 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeEpisode, mediaSearchQueries } from '../lib/core.mjs';
+import { normalizeEpisode, mediaSearchQueries,mediaVideoQuery } from '../lib/core.mjs';
 import { EFFECT_TYPES, normalizeDirective, remapAnchor, buildAdvancedPlan,
   requiredSounds, validateAdvancedPlan, subjectBounds, positionProp } from '../lib/director.mjs';
 
 const all = new Set(EFFECT_TYPES);
+
+test('context media searches prioritize the actual subject without appending category labels',()=>{
+ const article={title:'Axolotl',category:{label:'Nature & animal adaptations'}};
+ const scene={subjectEntity:'Axolotl',visualRole:'context',visualQuery:'axolotl tissue regeneration close up',videoQuery:'axolotl regenerating limb'};
+ const queries=mediaSearchQueries(scene,article,'Axolotl');
+ assert.equal(queries[0],'Axolotl');assert.equal(mediaVideoQuery(scene,article,'Axolotl'),'Axolotl');
+ assert.ok(queries.every(query=>!query.includes(article.category.label)));
+ assert.equal(mediaVideoQuery({...scene,visualRole:'evidence',videoQuery:'axolotl eating worm'},article,'Axolotl'),'axolotl eating worm');
+});
 const source = {
   title: 'Dynamic director test', topic: 'Octopus', scenes: [
     { narration: 'Eight arms can swim.', line1: 'OCEAN', line2: 'WONDER', visualQuery: 'octopus underwater',

@@ -42,6 +42,22 @@ class MediaFramingTests(unittest.TestCase):
         expected = crop_media(self.source, (80, 120), focus=[.8125, .5])
         self.assertIsNone(ImageChops.difference(image, expected).getbbox())
 
+    def test_still_cache_bounds_resolution_and_releases_the_previous_scene(self):
+        with Image.new('RGB', (4000, 3000), 'blue') as image:
+            image.save(self.root / 'large.jpg')
+        scene = {'start': 0, 'reference_media': {'image': 'large.jpg', 'media_type': 'photo', 'camera': 'static'}}
+        path = self.root / 'cache-plan.json'
+        path.write_text(json.dumps({'meta': {'size': [80, 120], 'duration': 2, 'out': 'out.mp4'}, 'scenes': [scene]}), encoding='utf-8')
+        reel = Reel(path)
+        reel.render_reference_media(scene, .5, 2, 0, .5)
+        first = next(iter(reel.reference_still_cache.values()))
+        self.assertLessEqual(max(first.size), 2560)
+        scene['reference_media']['image'] = 'source.png'
+        reel.render_reference_media(scene, .5, 2, 0, .5)
+        self.assertEqual(len(reel.reference_still_cache), 1)
+        with self.assertRaises(ValueError):
+            first.getpixel((0, 0))
+
     def test_per_shot_contain_keeps_both_sides_without_blurred_fill(self):
         media = {'image': 'source.png', 'media_type': 'photo', 'camera': 'static', 'fit': 'contain'}
         image = self.render(media)

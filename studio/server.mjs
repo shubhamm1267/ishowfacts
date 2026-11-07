@@ -13,14 +13,15 @@ import {
   rename,
   rm
 } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { createReadStream,readFileSync } from 'node:fs';
+import {totalmem} from 'node:os';
 import { spawn } from 'node:child_process';
-import { stockVideo,createStockSession,createStockMediaCache,prefetchStockVideo,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
+import { stockVideo,stockPhoto,createStockSession,createStockMediaCache,prefetchStockVideo,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
 import { preparePointerAssets, prepareHeadlineAssets, prepareOverlayTextAssets, normalizeHookTitle } from './lib/reference-style.mjs';
 import { prepareExplainers } from './lib/explainer.mjs';
 import {heygenVoice,heygenPerformance,NATURAL_SPEECH_TRIM,DEFAULT_HEYGEN_VOICE,HEYGEN_FREE_MODEL,heygenModel,heygenSpeechMode,validateHeygenSettings} from './lib/heygen.mjs';
 import {recordStage,timingSummary} from './lib/job-timing.mjs';
-import {runSceneWorkers,mediaBudget,assignMediaTypes,mediaBudgetIssues,createProcessLimiter} from './lib/media-workers.mjs';
+import {runSceneWorkers,mediaBudget,assignMediaTypes,mediaBudgetIssues,createProcessLimiter,resourceBudget} from './lib/media-workers.mjs';
 import {framingReviewer,reviewRenderedVideo} from './lib/visual-quality.mjs';
 import {QualityError,narrationTempo} from './lib/quality.mjs';
 import {hookContextFor,hookFamily} from './lib/episode-prompt.mjs';
@@ -48,6 +49,7 @@ import {
   gemini,
   auditCutout,
   mediaSearchQueries,
+  mediaVideoQuery,
   repairMediaBrief,
   resolveVoiceProfile,
   runWithProviders, generationSignal, checkGenerationCancelled
@@ -96,6 +98,9 @@ const jobControllers=new Map();
 
 const jobs = new Map();
 const instanceId=randomUUID();
+const memoryNumber=path=>{try{const n=Number(readFileSync(path,'utf8').trim());return Number.isFinite(n)&&n>0&&n<2**60?n:0;}catch{return 0;}};
+const memoryLimit=Math.min(...[totalmem(),process.constrainedMemory?.(),memoryNumber('/sys/fs/cgroup/memory.max'),memoryNumber('/sys/fs/cgroup/memory/memory.limit_in_bytes')].filter(n=>n>0));
+const resources=resourceBudget(memoryLimit);
 
 export const VIDEO_TTL_MS = 30 * 60 * 1000;
 
@@ -249,6 +254,7 @@ async function checkpoint(job, stage, progress) {
   recordStage(job,stage);
   job.stage = stage;
   job.progress = progress;
+  if(process.env.RENDER)console.log('[MEMORY]',JSON.stringify({job:job.id,stage,nodeMiB:Math.round(process.memoryUsage().rss/1048576),containerMiB:Math.round((memoryNumber('/sys/fs/cgroup/memory.current')||memoryNumber('/sys/fs/cgroup/memory/memory.usage_in_bytes'))/1048576),limitMiB:Math.round(memoryLimit/1048576)}));
 
   await writeFile(
     join(JOBS, job.id, 'status.json'),
@@ -423,12 +429,12 @@ export function validateLogoUpload(value){
 }
 
 // Executes Python and FFmpeg with a configurable timeout.
-const limitProcess=createProcessLimiter(3);
+const limitProcess=createProcessLimiter(resources.processConcurrency);
 export function processTool(command, args, onText) {
   // FFmpeg otherwise sizes its thread pools from the host CPU count, which
   // can greatly exceed the memory/CPU allocation of a small Render container.
   if(/(?:^|[\\/])ffmpeg(?:\.exe)?$/i.test(command))
-    args=['-threads','2','-filter_threads','1','-filter_complex_threads','1',...args];
+    args=['-threads',String(resources.ffmpegThreads),'-filter_threads','1','-filter_complex_threads','1',...args.slice(0,-1),'-threads',String(resources.ffmpegThreads),args.at(-1)];
   return limitProcess(()=>new Promise((resolveJob, rejectJob) => {
     checkGenerationCancelled();
     const signal=generationSignal();
@@ -450,7 +456,7 @@ export function processTool(command, args, onText) {
 
     const child = spawn(command, args, {
       cwd: ROOT,
-      env: process.env,
+      env: {...process.env,PAPERDOC_THREADS:String(resources.ffmpegThreads),...(resources.lowMemory?{OPENBLAS_NUM_THREADS:'1',OMP_NUM_THREADS:'1',MKL_NUM_THREADS:'1',NUMEXPR_NUM_THREADS:'1'}:{})},
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32'
@@ -1020,7 +1026,7 @@ async function runJob(job, input) {
     }
 
     if(strictMedia)assignMediaTypes(episode,strictMedia);
-    const mediaConcurrency=strictMedia?3:2;
+    const mediaConcurrency=Math.min(resources.mediaConcurrency,strictMedia?3:2);
 
     job.title = episode.title;
 
@@ -1049,7 +1055,7 @@ async function runJob(job, input) {
     const mediaLookup=(key,operation)=>stockLookup(stockSession,key,operation);
     // Metadata-only searches overlap voice generation/audit. Actual HD acquisition
     // and frame/crop checks still wait for the final measured narration timing.
-    const stockQueries=[...new Set(episode.scenes.filter(scene=>scene.visual==='video').map(scene=>scene.videoQuery||scene.visualQuery))];
+    const stockQueries=[...new Set(episode.scenes.filter(scene=>scene.visual==='video').map(scene=>mediaVideoQuery(scene,source.articles?.[scene.factIndex]||source,topic)))];
     const stockPrefetch=!input.demo&&input.mediaMode!=='photos'&&process.env.ENABLE_STOCK_VIDEO!=='0'
       ?runSceneWorkers(stockQueries.length,2,i=>prefetchStockVideo(stockQueries[i],{session:stockSession})).catch(()=>[])
       :Promise.resolve();
@@ -1116,7 +1122,8 @@ async function runJob(job, input) {
     const usedImages = new Set();
     let videoCount = 0, videoReservations = 0, completedMedia = 0;
     const maxVideos = strictMedia?.videos||clamp(Number(process.env.STOCK_VIDEO_MAX_SCENES) || 3, 1, 6);
-    const verifyFraming=framingReviewer({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets,fit:input.mediaFit});
+    const verifyFraming=framingReviewer({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets,fit:input.mediaFit,
+      onReject:({id,reason})=>{const scene=Number(/^(?:video|photo|still)-(\d+)/.exec(id)?.[1]);if(Number.isFinite(scene))job.warnings.push(`Scene ${scene+1}: visual rejected: ${reason}`);}});
     let visualPass=0;
 
     const prepareSceneMedia = async i => {
@@ -1133,7 +1140,7 @@ async function runJob(job, input) {
             && videoCount + videoReservations < maxVideos && scene.visual === 'video') {
           videoReservations++;
           try {
-            const clip = await stockVideo(scene.videoQuery || scene.visualQuery, join(assets, `clip_${i}.mp4`), {
+            const clip = await stockVideo(mediaVideoQuery(scene,sceneSource,topic), join(assets, `clip_${i}.mp4`), {
               used: usedImages,
               session:stockSession,
               subject:scene.subjectEntity||sceneSource.title||topic,
@@ -1257,7 +1264,15 @@ async function runJob(job, input) {
 
             let media = null;
 
-            try {
+            // The same stock provider also supplies licensed photos, which
+            // avoids relying exclusively on Commons/Openverse after clip rejection.
+            const tryStockPhoto=async()=>{
+              try{return await stockPhoto(search,dest,{used:usedImages,session:stockSession});}
+              catch(e){job.warnings.push(`Scene ${i+1}: stock photo search unavailable (${e.message})`);return null;}
+            };
+            if(attempt%2===0)media=await tryStockPhoto();
+
+            if(!media)try {
               media = await commonsImage(
                 search,
                 dest,
@@ -1281,9 +1296,8 @@ async function runJob(job, input) {
               }
             }
 
-            if (!media) {
-              continue;
-            }
+            if(!media&&attempt%2===1)media=await tryStockPhoto();
+            if (!media) continue;
 
             usedImages.add(
               media.openverseId || media.title
@@ -1394,7 +1408,7 @@ async function runJob(job, input) {
           // when public photo search cannot find a verified image. It remains
           // a static JPEG, never an extra moving-video scene or a reused clip.
           if(!selected&&strictMedia&&visualPass>0){
-            const stillSource=await stockVideo(scene.videoQuery||scene.visualQuery,join(assets,`photo_source_${i}.mp4`),{
+            const stillSource=await stockVideo(mediaVideoQuery(scene,sceneSource,topic),join(assets,`photo_source_${i}.mp4`),{
               used:usedImages,subject:scene.subjectEntity||sceneSource.title||topic,session:stockSession,creditPlacement:'description',
               inspect:async media=>{
                 const probe=JSON.parse(await processTool('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height:format=duration','-of','json',media.file]));
@@ -1479,7 +1493,7 @@ async function runJob(job, input) {
             images[i] = null;
 
             job.warnings.push(
-              `No usable CC0/CC BY image for scene ${i + 1}; ${input.visualStyle==='reference-news'?'verified media retry required':'graphic fallback used'}`
+              `No verified licensed photo for scene ${i + 1}; ${input.visualStyle==='reference-news'?'verified media retry required':'graphic fallback used'}`
             );
           }
         }
@@ -2179,6 +2193,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
             {
               ok: true,
               instanceId,
+              resources:{...resources,memoryLimitMiB:Math.round(memoryLimit/1048576)},
 
               deployment: {
                 frontendOrigin: normalizeFrontendOrigin(frontendOrigin),
