@@ -103,8 +103,6 @@ const memoryLimit=Math.min(...[totalmem(),process.constrainedMemory?.(),memoryNu
 const resources=resourceBudget(memoryLimit);
 
 export const VIDEO_TTL_MS = 30 * 60 * 1000;
-export const COMPLETED_VIDEO_TTL_MS = 5 * 60 * 1000;
-export const jobRetentionMs = status => status === 'complete' ? COMPLETED_VIDEO_TTL_MS : VIDEO_TTL_MS;
 
 export async function expireJob(id) {
   if (!/^[a-f0-9-]{36}$/i.test(id)) {
@@ -138,7 +136,7 @@ export async function expireJob(id) {
   if (!Number.isFinite(expiresAt)) {
     try {
       const info = await stat(statusFile);
-      expiresAt = info.mtimeMs + jobRetentionMs(saved.status);
+      expiresAt = info.mtimeMs + VIDEO_TTL_MS;
     } catch {
       return;
     }
@@ -215,8 +213,6 @@ function safeJob(job) {
     category:job.category||null,
     size: job.size || [1080,1920],
     performance:timingSummary(job)||job.performance||null,
-    storyPreparationSeconds: job.storyPreparationSeconds || null,
-    preview: job.preview || null,
     uploadTitleUrl: status === 'complete' ? `/api/jobs/${id}/title` : null,
     uploadDescriptionUrl: status === 'complete' ? `/api/jobs/${id}/description` : null,
     stage,
@@ -401,7 +397,6 @@ export function validateInput(data) {
   return {
     topic,
     recentTopics:[...new Set(recentTopics.map(t=>t.trim()))],
-    previewFirst: data.previewFirst === true,
     language,
     factMode:data.factMode==='random'?'random':'topic',
     seconds,
@@ -631,7 +626,6 @@ export async function makeVoice(
 
         '-af',
         [tempo>1?`atempo=${tempo}`:null,voiceProvider==='heygen'?heygenPerformance(episode.scenes[i],voiceStyle,voiceAccent.startsWith('en')?'en':'hi').filter:null,
-         voiceStyle==='energetic'?'silenceremove=stop_periods=-1:stop_duration=0.55:stop_threshold=-48dB:stop_silence=0.18':null,
          voiceProvider!=='cartesia'?NATURAL_SPEECH_TRIM:'silenceremove=start_periods=1:start_duration=0:start_threshold=-42dB:stop_periods=-1:stop_duration=0.31:stop_threshold=-42dB,apad=pad_dur=0.05'].filter(Boolean).join(','),
 
         '-ar',
@@ -902,7 +896,7 @@ async function makeDemoArt(path) {
   );
 }
 
-async function runJob(job, input, approved = null) {
+async function runJob(job, input) {
   const folder = join(JOBS, job.id);
   const assets = join(folder, 'assets');
 
@@ -913,13 +907,12 @@ async function runJob(job, input, approved = null) {
       recursive: true
     });
     let preparedLogo='';
+    if(input.logoDataUrl){
+      const logoSource=join(assets,'uploaded-logo');preparedLogo=join(assets,'logo.png');
+      await writeFile(logoSource,Buffer.from(input.logoDataUrl.split(',')[1],'base64'));
+      await processTool(process.env.PYTHON||'python3',['scripts/prepare_logo.py',logoSource,preparedLogo]);
+    }
 
-    let topic, source, episode;
-    const strictMedia=!input.demo&&input.visualStyle==='reference-news'&&input.mediaMode==='mixed'
-      ?mediaBudget(input.seconds):null;
-    if (approved) {
-      ({topic, source, episode} = approved);
-    } else {
     await checkpoint(
       job,
       'Selecting and researching topic',
@@ -965,6 +958,7 @@ async function runJob(job, input, approved = null) {
       await saveTopicHistory([]);
       await checkpoint(job,'Researching selected topics',8);
     };
+    let topic,source;
     if(input.demo){topic='Octopus';source={title:'Offline demonstration',url:null};}
     else if(input.factMode==='random'){
       source=await randomFactsSource({history:topicHistory,language:input.language,onTopicsSelected:rememberSelection});
@@ -1000,6 +994,8 @@ async function runJob(job, input, approved = null) {
       15
     );
 
+    const strictMedia=!input.demo&&input.visualStyle==='reference-news'&&input.mediaMode==='mixed'
+      ?mediaBudget(input.seconds):null;
     let hookHistory=[];
     if(!input.demo){
       try{const saved=JSON.parse(await readFile(join(JOBS,'.hook-history.json'),'utf8'));if(Array.isArray(saved))hookHistory=saved.filter(r=>typeof r?.opening==='string').slice(-20);}catch{/* First run or deleted history. */}
@@ -1007,7 +1003,7 @@ async function runJob(job, input, approved = null) {
 
     const hookContext=hookContextFor(hookHistory.filter(row=>(row.language||'hi')===input.language));
     if(strictMedia&&process.env.ENABLE_STOCK_VIDEO==='0')throw Error('Enable stock video for video-first generation');
-    episode = input.demo
+    const episode = input.demo
       ? demoEpisode()
       : await writeEpisode(
           topic,
@@ -1030,6 +1026,7 @@ async function runJob(job, input, approved = null) {
     }
 
     if(strictMedia)assignMediaTypes(episode,strictMedia);
+    const mediaConcurrency=Math.min(resources.mediaConcurrency,strictMedia?3:2);
 
     job.title = episode.title;
 
@@ -1053,23 +1050,6 @@ async function runJob(job, input, approved = null) {
         2
       )
     );
-
-    if (input.previewFirst) {
-      const {providerKeys, ...savedInput} = input;
-      await writeFile(join(folder,'approved-story.json'),JSON.stringify({input:savedInput,topic,source,episode}));
-      job.preview={title:normalizeHookTitle(episode.headlineText||episode.title),headline:episode.headlineText||episode.title,topic,
-        narration:episode.scenes.map(scene=>scene.narration).join('\n\n')};
-      job.status='awaiting_approval';
-      await checkpoint(job,'Story ready — approve to create video',24);
-      return;
-    }
-    }
-    if(input.logoDataUrl){
-      const logoSource=join(assets,'uploaded-logo');preparedLogo=join(assets,'logo.png');
-      await writeFile(logoSource,Buffer.from(input.logoDataUrl.split(',')[1],'base64'));
-      await processTool(process.env.PYTHON||'python3',['scripts/prepare_logo.py',logoSource,preparedLogo]);
-    }
-    const mediaConcurrency=Math.min(resources.mediaConcurrency,strictMedia?3:2);
 
     const stockSession=createStockSession({cache:stockMediaCache});
     const mediaLookup=(key,operation)=>stockLookup(stockSession,key,operation);
@@ -1825,8 +1805,8 @@ async function runJob(job, input, approved = null) {
 
     // Upload title is generated from the finished episode, independently of
     // the fixed on-video headline, which keeps its existing design.
-    job.youtubeTitle = job.preview?.title || episode.title;
-    if (!input.demo && !job.preview) {
+    job.youtubeTitle = episode.title;
+    if (!input.demo) {
       try {
         const title = await gemini(`Write ONE concise, engaging YouTube Shorts upload title in ${input.language === 'hi' ? 'natural Hindi (Devanagari, a little English is fine)' : 'English'}. Base it ONLY on the actual finished narration below. Curiosity is welcome, but no invented facts, unsupported numbers or fake danger. At most 90 characters, exactly one final emoji from 😲 🤔 🔍 ⚡, no hashtags. Return JSON {"title":"..."}. Narration: ${JSON.stringify(episode.scenes.map(s=>s.narration))}`);
         if(input.language==='en'&&/[\u0900-\u097f]/u.test(title.title||''))throw Error('Upload title must be English');
@@ -1880,7 +1860,7 @@ async function runJob(job, input, approved = null) {
 
     if (job.status !== 'running') {
       job.expiresAt = new Date(
-        Date.now() + jobRetentionMs(job.status)
+        Date.now() + VIDEO_TTL_MS
       ).toISOString();
 
       try {
@@ -1900,7 +1880,7 @@ async function runJob(job, input, approved = null) {
         () => {
           void expireJob(job.id);
         },
-        jobRetentionMs(job.status) + 1500
+        VIDEO_TTL_MS + 1500
       );
 
       cleanupTimer.unref();
@@ -2197,7 +2177,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
       );
 
       const jobRoute =
-        /^\/api\/jobs\/([a-f\d-]{36})(?:\/(video|download|credits|episode|plan|contact|title|description|cancel|approve))?$/.exec(
+        /^\/api\/jobs\/([a-f\d-]{36})(?:\/(video|download|credits|episode|plan|contact|title|description|cancel))?$/.exec(
           url.pathname
         );
 
@@ -2247,31 +2227,6 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
             }
           );
 
-        } else if(req.method==='POST'&&jobRoute?.[2]==='approve'){
-          if(busy){sendJSON(res,409,{error:'Another generation is running. Please wait.'});return;}
-          busy=true;
-          let started=false;
-          try {
-            const id=jobRoute[1];
-            const job=jobs.get(id)||JSON.parse(await readFile(join(JOBS,id,'status.json'),'utf8'));
-            if(job.status!=='awaiting_approval'||Date.parse(job.expiresAt)<=Date.now()){
-              sendJSON(res,409,{error:'Story is no longer awaiting approval. Generate a fresh story.'});return;
-            }
-            const saved=JSON.parse(await readFile(join(JOBS,id,'approved-story.json'),'utf8'));
-            const body=await jsonBody(req);
-            const input=validateInput({...saved.input,providerKeys:body.providerKeys||{}});
-            job.status='running';job.expiresAt=null;job.error=null;
-            job.storyPreparationSeconds=(timingSummary(job)||job.performance)?.elapsedSeconds||0;
-            job._timing=undefined;
-            jobs.set(id,job);activeJob=job;
-            const controller=new AbortController();jobControllers.set(id,controller);
-            await checkpoint(job,'Creating approved story',24);
-            started=true;
-            void runWithProviders(input.providerKeys,()=>runJob(job,input,saved),controller.signal);
-            sendJSON(res,202,safeJob(job));
-          } finally {
-            if(!started){busy=false;activeJob=null;jobControllers.delete(jobRoute[1]);}
-          }
         } else if(req.method==='POST'&&jobRoute?.[2]==='cancel'){
           const job=jobs.get(jobRoute[1]);
           if(!job){sendJSON(res,404,{error:'Job not found'});return;}

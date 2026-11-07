@@ -4,8 +4,8 @@ import { normalizeEpisode, validateThreeFacts, licenseInfo, isFreesoundCC0, buil
   semanticEffectAllowed, normalizeDiagram, resolveVoiceProfile, speechPerformance,
   mediaTitleMismatch, randomFactsSource, runWithProviders, wikipediaSource,
   chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES,generationFetch,createWikimediaGate,wikimediaRetryMs } from '../lib/core.mjs';
-import { validateInput,VIDEO_TTL_MS,COMPLETED_VIDEO_TTL_MS,jobRetentionMs,expireJob,normalizeFrontendOrigin,makeServer,processTool } from '../server.mjs';
-import {mkdir,writeFile,stat,readFile,rm} from 'node:fs/promises';
+import { validateInput,VIDEO_TTL_MS,expireJob,normalizeFrontendOrigin,makeServer,processTool } from '../server.mjs';
+import {mkdir,writeFile,stat,readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -89,55 +89,6 @@ test('cancel endpoint stops active work, persists cancelled status and releases 
   const path=new URL('../data/topic-history.json',import.meta.url);
   const history=JSON.parse(await readFile(path,'utf8'));
   await writeFile(path,JSON.stringify(history.filter(row=>row.topic!==attemptedTopic),null,2));
- }
-});
-
-test('preview persists exact narration without credentials and approval resumes without rewriting',async()=>{
- const savedFetch=globalThis.fetch,previousDemo=process.env.DEMO_MODE;
- process.env.DEMO_MODE='1';
- const server=makeServer();await new Promise(ok=>server.listen(0,'127.0.0.1',ok));
- const base='http://127.0.0.1:'+server.address().port;
- let folder,id,entered;const ttsTexts=[];const ready=new Promise(resolve=>entered=resolve);
- try{
-  const response=await savedFetch(base+'/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({demo:true,previewFirst:true,providerKeys:{FISH_API_KEY:'test-secret'}})});
-  assert.equal(response.status,202);id=(await response.json()).id;
-  let job;
-  for(let i=0;i<100;i++){
-   job=await(await savedFetch(base+'/api/jobs/'+id)).json();
-   if(job.status!=='running'&&job.expiresAt)break;
-   await new Promise(resolve=>setTimeout(resolve,20));
-  }
-  assert.equal(job.status,'awaiting_approval');assert.ok(job.preview.narration);
-  assert.equal(job.videoUrl,null);assert.equal((await(await savedFetch(base+'/api/health')).json()).busy,false);
-  folder=join(resolve(process.env.JOBS_DIR||fileURLToPath(new URL('../jobs/',import.meta.url))),id);
-  const text=await readFile(join(folder,'approved-story.json'),'utf8');
-  assert.equal(text.includes('test-secret'),false);
-  const snapshot=JSON.parse(text);
-  assert.equal(job.preview.narration,snapshot.episode.scenes.map(s=>s.narration).join('\n\n'));
-  // Resume a saved story and intercept TTS before media/render work.
-  snapshot.input.demo=false;snapshot.input.voiceProvider='fish';snapshot.input.mediaMode='photos';snapshot.input.visualStyle='paper';
-  await writeFile(join(folder,'approved-story.json'),JSON.stringify(snapshot));
-  globalThis.fetch=async(url,options)=>{
-   assert.equal(String(url),'https://api.fish.audio/v1/tts','approval must not research or rewrite the story');
-   ttsTexts.push(JSON.parse(options.body).text);entered();
-   return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
-  };
-  const approve=await savedFetch(base+'/api/jobs/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({providerKeys:{GEMINI_API_KEY:'test',FISH_API_KEY:'test'}})});
-  assert.equal(approve.status,202);await ready;
-  assert.ok(ttsTexts.includes(snapshot.episode.scenes[0].narration));
-  assert.equal((await savedFetch(base+'/api/jobs/'+id+'/approve',{method:'POST',body:'{}'})).status,409);
-  await savedFetch(base+'/api/jobs/'+id+'/cancel',{method:'POST'});
-  for(let i=0;i<100;i++){
-   if(!(await(await savedFetch(base+'/api/health')).json()).busy)break;
-   await new Promise(resolve=>setTimeout(resolve,20));
-  }
-  assert.equal((await(await savedFetch(base+'/api/jobs/'+id)).json()).status,'cancelled');
- }finally{
-  if(id)await savedFetch(base+'/api/jobs/'+id+'/cancel',{method:'POST'});
-  globalThis.fetch=savedFetch;
-  if(previousDemo===undefined)delete process.env.DEMO_MODE;else process.env.DEMO_MODE=previousDemo;
-  await new Promise(ok=>server.close(ok));
-  if(folder)await rm(folder,{recursive:true,force:true});
  }
 });
 
@@ -259,23 +210,20 @@ test('research includes article mechanisms beyond the definition and retains sum
  }finally{globalThis.fetch=saved;}
 });
 
-test('completed job and all assets remain through minute 4 and cleanup deletes the folder after minute 5',async()=>{
+test('completed job and all assets remain through minute 29 and cleanup deletes the folder after minute 30',async()=>{
  const id=randomUUID(),root=resolve(process.env.JOBS_DIR||fileURLToPath(new URL('../jobs/',import.meta.url))),folder=join(root,id);
  const completedAt=Date.now(),savedNow=Date.now;
  await mkdir(folder,{recursive:true});
- await writeFile(join(folder,'status.json'),JSON.stringify({id,status:'complete',expiresAt:new Date(completedAt+COMPLETED_VIDEO_TTL_MS).toISOString()}));
+ await writeFile(join(folder,'status.json'),JSON.stringify({id,status:'complete',expiresAt:new Date(completedAt+VIDEO_TTL_MS).toISOString()}));
  await writeFile(join(folder,'video.mp4'),'retention fixture');
  await mkdir(join(folder,'assets'),{recursive:true});
  await writeFile(join(folder,'assets','clip.mp4'),'temporary clip fixture');
  try{
   assert.equal(VIDEO_TTL_MS,30*60*1000);
-  assert.equal(jobRetentionMs("complete"),5*60*1000);
-  assert.equal(jobRetentionMs("awaiting_approval"),30*60*1000);
-  assert.equal(jobRetentionMs("failed"),30*60*1000);
-  Date.now=()=>completedAt+4*60*1000;
+  Date.now=()=>completedAt+29*60*1000;
   await expireJob(id);assert.ok((await stat(join(folder,'video.mp4'))).isFile());
   assert.ok((await stat(join(folder,'assets','clip.mp4'))).isFile());
-  Date.now=()=>completedAt+5*60*1000+1;
+  Date.now=()=>completedAt+30*60*1000+1;
   await expireJob(id);await assert.rejects(stat(folder),{code:'ENOENT'});
  }finally{Date.now=savedNow;}
 });
