@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+COPY studio/package.json studio/package-lock.json studio/
+RUN npm ci --prefix studio --omit=dev --no-audit --no-fund
+
 COPY studio/requirements-cutout.txt studio/requirements-cutout.txt
 
 RUN python3 -m venv /opt/facts-venv

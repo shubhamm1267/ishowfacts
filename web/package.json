@@ -2,7 +2,7 @@
   "name": "paper-facts-studio-ui",
   "version": "1.0.0",
   "private": true,
-  "scripts": { "start": "ng serve --host 127.0.0.1", "build": "ng build" },
+  "scripts": { "start": "ng serve --host 127.0.0.1", "build": "ng build", "build:netlify": "ng build && node netlify-proxy.cjs" },
   "dependencies": {
     "@angular/common": "^20.3.0",
     "@angular/compiler": "^20.3.0",

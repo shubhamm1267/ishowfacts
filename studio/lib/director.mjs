@@ -59,6 +59,7 @@ export function normalizeDirective(scene, index = 0) {
   const photoStyle = choose(scene.photoStyle, photoStyles, photoStyles[index % photoStyles.length]);
   const soundCue = choose(scene.soundCue, soundCues, '');
   const sfxQuery = short(scene.sfxQuery || '', 60).replace(/[^a-zA-Z0-9 +'-]/g, '');
+  const sfxReason=short(scene.sfxReason||'',180),sfxAt=clamp(scene.sfxAt??.5,.05,.95);
   // An explicit empty effects array is intentional. Never inject an unrelated
   // ruler/flask just because the model declined to animate that fact.
   const proposed = Array.isArray(scene.effects) ? scene.effects : fallbackEffects(scene).map(type => ({ type }));
@@ -73,11 +74,12 @@ export function normalizeDirective(scene, index = 0) {
     rel: Array.isArray(e.rel) && e.rel.length === 2 ? [clamp(e.rel[0], .08, .92), clamp(e.rel[1], .08, .92)] : null,
   }));
   return { setting, layout, camera, motion, action, theme, backgroundMode, titleStyle, photoStyle, effects,
-    soundCue, sfxQuery, callout: short(scene.callout || '', 38),
+    soundCue, sfxQuery, sfxReason, sfxAt, callout: short(scene.callout || '', 38),
     beatTextHi: short(scene.beatTextHi || '', 56) };
 }
 
-export function requiredSounds(episode) {
+export function requiredSounds(episode,{visualStyle='paper'}={}) {
+  if(visualStyle==='reference-news')return [...new Set(episode.scenes.filter(s=>s.soundCue&&s.sfxQuery&&s.sfxReason?.length>=12).slice(0,2).map(s=>s.soundCue))];
   const out = new Set(['whoosh']);
   for (const s of episode.scenes) {
     if (s.soundCue) out.add(s.soundCue);
@@ -125,7 +127,11 @@ function mainVisual(img, scene) {
       ? { from: [x - 170, y], to: [x, y] }
       : { from: [x + 25, y + 25], to: [x, y] };
   const safeMaxWidth = Math.min(width * 1.24, 2 * Math.min(x - 52, 1080 - x - 52));
-  const element = img.cutout
+  const element = img.video
+    ? { id: 'subject_video', type: 'video', frames: img.frames, frame_count: img.frameCount,
+      video_fps: img.fps, width: img.width && img.height ? Math.min(width, Math.round(760 * img.width / img.height)) : width,
+      attribution: img.attribution || '' }
+    : img.cutout
     ? { id: 'subject', type: 'cutout', subject: 'subject', height: width, max_width: safeMaxWidth,
       mode: scene.setting === 'xray' ? 'xray' : 'color' }
     : { id: 'subject_photo', type: 'photo', image: img.path, width,
@@ -191,7 +197,7 @@ function intersects(a, b, margin = 0) {
 export function subjectBounds(main, image) {
   if (!main) return rect(540, 1140, 700, 520);
   const [x, y] = main.move?.to || [main.x, main.y];
-  if (main.type === 'photo') return rect(x, y, main.width + 110, main.width * 0.93 + 150);
+  if (main.type === 'photo' || main.type === 'video') return rect(x, y, main.width + 110, main.width * 0.93 + 150);
   const box = image?.bbox?.bbox;
   const ratio = Array.isArray(box) && box.length === 4 && box[3] > box[1]
     ? (box[2] - box[0]) / (box[3] - box[1]) : 1.2;
@@ -312,7 +318,7 @@ function effectElement(e, scene, sceneDuration, i, hasCutout, sfx) {
 
 export function buildAdvancedPlan(episode, timing, images, sfx, output, voice,
   { demo = false, fps = 30, seed = Math.floor(Math.random() * 1_000_000),
-    backgroundPalette = 'random' } = {}) {
+    backgroundPalette = 'random', visualStyle = 'paper', mediaFit = 'cover' } = {}) {
   if (timing.length !== episode.scenes.length || images.length !== timing.length) throw Error('Scene/media timing mismatch');
   backgroundPalette = ['white', 'black', 'random'].includes(backgroundPalette) ? backgroundPalette : 'random';
   const subjects = {};
@@ -345,7 +351,8 @@ export function buildAdvancedPlan(episode, timing, images, sfx, output, voice,
     const img = images[i];
     const duration = timing[i].duration;
     const elements = [];
-    const diagram = s.visual === 'diagram' && s.diagram?.nodes?.length >= 2 ? s.diagram : null;
+    const diagram = s.visual === 'diagram' && s.diagram?.nodes?.length >= 2 &&
+      (visualStyle !== 'reference-news' || s.diagram.reason?.length >= 12) ? s.diagram : null;
     const main = diagram ? null : mainVisual(img, directives);
     const subject = subjectBounds(main, img);
     const occupied = [];
@@ -361,8 +368,12 @@ export function buildAdvancedPlan(episode, timing, images, sfx, output, voice,
       elements.push(main);
     } else if (diagram) {
       elements.push({ type: 'infographic', nodes: diagram.nodes, links: diagram.links,
+        animation: diagram.animation,
+        professional: visualStyle === 'reference-news',
         heading: diagram.heading, style: diagram.style || 'cards', x: 540, y: 1180, at: .16,
         dur: Math.max(.8, duration - .3), background_palette: backgroundPalette, sfx: false });
+    } else if (s.visual !== 'illustration' && visualStyle === 'reference-news') {
+      elements.push({type:'text',text:s.line1,size:78,x:540,y:1060,at:.1,sfx:false});
     } else if (s.visual !== 'illustration') {
       // A missing CC-licensed photo must not turn into an unrelated stock tag.
       // Show honest factual text as source-driven motion graphics instead.
@@ -404,17 +415,29 @@ export function buildAdvancedPlan(episode, timing, images, sfx, output, voice,
       page, theme, layout: directives.layout, camera: directives.camera, elements,
       title_style: directives.titleStyle, background_mode: directives.backgroundMode,
       layout_qc: { subject, overlays: occupied } };
+    if(visualStyle==='reference-news'){scene.title=['',''];scene.background_mode='paper';scene.page='black';}
     if (directives.beatTextHi) scene.beat_text_hi = directives.beatTextHi;
+    if (visualStyle === 'reference-news' && img && main) {
+      scene.reference_media = { ...main, image: img.path, media_type: img.video ? 'video' : 'photo',
+        frames: img.frames, frame_count: img.frameCount, video_fps: img.fps,
+        attribution: img.attribution || '', camera: directives.camera,
+        subject_focus: img.subjectFocus || [], fit: img.mediaFit,
+        pointer: s.pointOut && img.focus?.length ? { ...s.pointOut, tracks: img.focus } : null };
+      // Media is composed as one shot; preserve its full frame and pointer mapping.
+      scene.elements = [];
+      delete scene.layout_qc;
+    }
     // Backgrounds describe the story location; a decorative grass/soil layer
     // must NOT appear in every underwater/forest fact by default.
     if (s.sceneryMode === 'paper-forest' && directives.backgroundMode === 'forest') scene.scenery = 3 + i;
     if (s.sceneryMode === 'paper-seabed' && directives.backgroundMode === 'underwater') {
       scene.water = 4 + i; scene.seabed = true;
     }
-    if (sfx.boom && directives.action === 'impact') sounds.push({ t: timing[i].start + Math.min(.9, duration * .55), sfx: 'boom', db: -18, trim: .7 });
-    if (s.soundCue && sfx[s.soundCue]) sounds.push({
-      t: timing[i].start + Math.min(Math.max(.25, duration * .47), duration - .12),
-      sfx: s.soundCue, db: -18, trim: Math.min(1.2, duration * .4) });
+    if(visualStyle==='reference-news')for(const el of scene.elements)el.sfx=false;
+    if (visualStyle!=='reference-news'&&sfx.boom && directives.action === 'impact') sounds.push({ t: timing[i].start + Math.min(.9, duration * .55), sfx: 'boom', db: -18, trim: .7 });
+    if (s.soundCue && sfx[s.soundCue]&&(visualStyle!=='reference-news'||(s.sfxReason?.length>=12&&sounds.length<2))) sounds.push({
+      t: timing[i].start + Math.min(Math.max(.15, duration * (s.sfxAt??.47)), duration - .12),
+      sfx: s.soundCue, db: visualStyle==='reference-news'?-22:-18, trim: Math.min(.8, duration * .3) });
     scenes.push(scene);
   }
   const end = timing.at(-1);
@@ -423,8 +446,12 @@ export function buildAdvancedPlan(episode, timing, images, sfx, output, voice,
     headline_highlight: String(episode.headlineHighlight || '').trim().slice(0, 40),
     language: episode.language || 'hi', facts: episode.facts || [],
     background_palette: backgroundPalette, voice: voice || undefined,
+    visual_style: visualStyle,
+    ...(visualStyle==='reference-news'?{size:[1080,1440],headline_height:62,template:'reference-3x4'}:{}),
+    media_fit: mediaFit === 'contain' ? 'contain' : 'cover',
     out: output, duration: end.start + end.duration + .45, fps,
-    end_fade: .27, whoosh_db: sfx.whoosh ? -22 : null,
+    end_fade: .27, whoosh_db: visualStyle!=='reference-news'&&sfx.whoosh ? -22 : null,
+    ...(visualStyle==='reference-news'?{lufs:-8.5,true_peak:-1,audio_profile:'punchy-facts'}:{}),
     visual_seed: seed, sfx_map: sfx, require_external_sfx: !demo }, subjects, sounds, scenes };
   const issues = validateAdvancedPlan(plan);
   if (issues.length) throw Error(`Director plan rejected: ${issues.slice(0, 4).join('; ')}`);
@@ -452,7 +479,9 @@ export function validateAdvancedPlan(plan) {
     }
     const ids = new Set(scene.elements.filter(e => e.id).map(e => e.id));
     for (const el of scene.elements) {
-      if (!['cutout', 'photo', 'infographic', ...EFFECT_TYPES].includes(el.type)) errors.push(`Scene ${i + 1}: unknown ${el.type}`);
+      if (!['cutout', 'photo', 'video', 'svg_explainer', 'infographic', ...EFFECT_TYPES].includes(el.type)) errors.push(`Scene ${i + 1}: unknown ${el.type}`);
+      if (el.type === 'video' && (!el.frames || !(el.frame_count > 1) || !(el.video_fps > 0)))
+        errors.push(`Scene ${i + 1}: invalid video frames`);
       if (el.type === 'infographic' && (!Array.isArray(el.nodes) || el.nodes.length < 2 || el.nodes.length > 4))
         errors.push(`Scene ${i + 1}: invalid infographic nodes`);
       if (el.on && !ids.has(el.on)) errors.push(`Scene ${i + 1}: missing anchor target ${el.on}`);

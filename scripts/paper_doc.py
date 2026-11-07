@@ -31,11 +31,23 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 HERE = Path(__file__).resolve().parent
 PACK = HERE.parent                      # the skill folder (sounds/, prompts/, examples/)
 PACK_SOUNDS = PACK / "sounds"
+
+
+def run_hidden(*args, **kwargs):
+    if os.name == "nt":
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    return subprocess.run(*args, **kwargs)
+
+
+def popen_hidden(*args, **kwargs):
+    if os.name == "nt":
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    return subprocess.Popen(*args, **kwargs)
 
 
 def find_ast_root():
@@ -927,7 +939,7 @@ def vision_cutout(photo, out_png):
         Path(out_png).write_bytes(remove(Path(photo).read_bytes()))
         return
     swift = HERE / "subject_cutout.swift"
-    r = subprocess.run(["swift", str(swift), str(photo), str(out_png)], capture_output=True, text=True)
+    r = run_hidden(["swift", str(swift), str(photo), str(out_png)], capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"cut-out failed for {photo}: {r.stdout}{r.stderr}")
 
@@ -1642,6 +1654,18 @@ class Reel:
         self.out = self.resolve(meta["out"])
         self.page = self.dark_page = None
         self.pages = {}
+        self.headline_image = None
+        self.logo_image = None
+        self.reference_still_cache = {}
+        if meta.get("logo_image"):
+            with Image.open(self.resolve(meta["logo_image"])) as logo_image:
+                self.logo_image = logo_image.convert("RGBA")
+            # Match the reference watermark while preserving uploaded PNG alpha.
+            opacity = clamp(float(meta.get("logo_opacity", .5)))
+            self.logo_image.putalpha(self.logo_image.getchannel("A").point(lambda a: round(a * opacity)))
+        if meta.get("headline_image"):
+            with Image.open(self.resolve(meta["headline_image"])) as title_image:
+                self.headline_image = title_image.convert("RGBA")
 
     def resolve(self, p):
         p = str(p)
@@ -1658,7 +1682,7 @@ class Reel:
     def _voice_len(self):
         if not self.meta.get("voice"):
             raise ValueError("meta.duration is required when there is no meta.voice")
-        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+        r = run_hidden(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
                             str(self.resolve(self.meta["voice"]))], capture_output=True, text=True)
         return float(r.stdout.strip())
 
@@ -1745,6 +1769,26 @@ class Reel:
     # ---- elements
     def image_for(self, el, lt):
         t = el["type"]
+        if t in ("video", "svg_explainer"):
+            elapsed = max(0, lt - el.get("at", 0))
+            index = min(el["frame_count"] - 1, int(elapsed * el["video_fps"]))
+            extension = "png" if t == "svg_explainer" else "jpg"
+            path = self.resolve(el["frames"]) / f"{index:06d}.{extension}"
+            with Image.open(path) as source:
+                width = int(el.get("width", 790))
+                height = max(1, int(source.height * width / source.width))
+                frame = source.convert("RGBA").resize((width, height), Image.LANCZOS)
+            if el.get("attribution"):
+                strip = Image.new("RGBA", (width, height + 44), (25, 29, 33, 255))
+                strip.alpha_composite(frame)
+                credit = str(el["attribution"])
+                size = 24
+                while size > 10 and font("head", size).getlength(credit) > width - 24:
+                    size -= 1
+                ImageDraw.Draw(strip).text((12, height + 7), credit,
+                                          font=font("head", size), fill=(255, 250, 237))
+                return strip
+            return frame
         if t == "cutout":
             return self.subjects.image(el["subject"], el.get("mode", "color"), self.cut_height(el))
         if t == "stamp":
@@ -1977,6 +2021,8 @@ class Reel:
         idx, start, end = self.scene_at(t)
         sc = self.scenes[idx]
         lt = t - start
+        if sc.get("reference_media"):
+            return self.render_reference_media(sc, lt, end - start, idx, t)
         page_style = sc.get("page", "kraft")
         background_mode = sc.get("background_mode", "paper")
         page_key = f"{page_style}:{background_mode}"
@@ -2038,14 +2084,135 @@ class Reel:
             ox = max(0, min(zw - W, ox))
             oy = max(0, min(zh - H, oy))
             canvas = big.crop((ox, oy, ox + W, oy + H))
-        if self.meta.get("headline_hi"):
+        if self.headline_image is not None:
+            canvas.alpha_composite(self.headline_image, (0, 0))
+        elif self.meta.get("headline_hi"):
             draw_hindi_banner(canvas, self.meta["headline_hi"], lt, end - start, idx,
                               self.meta.get("headline_highlight", ""))
-        if sc.get("beat_text_hi"):
+        if sc.get("beat_text_image"):
+            with Image.open(self.resolve(sc["beat_text_image"])) as label:
+                canvas.alpha_composite(label.convert("RGBA"), ((W-label.width)//2, H-190))
+        elif sc.get("beat_text_hi"):
             draw_beat_caption(canvas, sc["beat_text_hi"], lt, end - start, idx)
+        if self.logo_image is not None:
+            canvas.alpha_composite(self.logo_image, (22, (self.headline_image.height if self.headline_image else 62) + 24))
         fade_end = self.meta.get("end_fade", 0.5)
         if fade_end and t > self.dur - fade_end:
             canvas = Image.blend(Image.new("RGBA", (W, H), (0, 0, 0, 255)), canvas, clamp((self.dur - t) / fade_end))
+        return canvas.convert("RGB")
+
+    def render_reference_media(self, sc, lt, duration, idx, t):
+        media = sc["reference_media"]
+        p = clamp(lt / max(.1, duration))
+        if media["media_type"] == "video":
+            n = min(media["frame_count"] - 1, int(max(0, lt) * media["video_fps"]))
+            path = self.resolve(media["frames"]) / f"{n:06d}.jpg"
+        else:
+            path = self.resolve(media["image"])
+        if media["media_type"] == "video":
+            with Image.open(path) as source:
+                source = source.convert("RGB")
+        else:
+            # A still can cover hundreds of frames. Decode it once; keep a
+            # small per-render cache rather than retaining video frame images.
+            key = str(path)
+            if key not in self.reference_still_cache:
+                if len(self.reference_still_cache) >= 4:
+                    self.reference_still_cache.pop(next(iter(self.reference_still_cache)))
+                with Image.open(path) as original:
+                    self.reference_still_cache[key] = original.convert("RGB")
+            source = self.reference_still_cache[key]
+        top = self.meta.get("headline_height", 164) if self.meta.get("headline_hi") else 0
+        vh = H - top
+        backdrop = Image.new("RGBA", (W, vh), (0, 0, 0, 255))
+        camera = media.get("camera", "push")
+        zoom = 1 if camera == "static" else 1 + .045 * ease_in_out(p)
+        if camera == "pull":
+            zoom = 1.045 - .045 * ease_in_out(p)
+        fit = media.get("fit") or self.meta.get("media_fit", "cover")
+        k = max(W / source.width, vh / source.height) if fit == "cover" else min(W / source.width, vh / source.height)
+        dw, dh = max(1, int(source.width * k * zoom)), max(1, int(source.height * k * zoom))
+        dx, dy = (W - dw) // 2, (vh - dh) // 2
+        if camera in ("pan-left", "pan-right"):
+            dx += int((1 if camera == "pan-left" else -1) * (p - .5) * max(0, dw - W))
+        pointer = media.get("pointer")
+        pt = None
+        tracks = media.get("subject_focus") or (pointer["tracks"] if pointer else [])
+        if tracks:
+            pt = tracks[0]["point"]
+            for a, b in zip(tracks, tracks[1:]):
+                if p >= b["at"]:
+                    pt = b["point"]
+                elif p >= a["at"]:
+                    q = clamp((p-a["at"]) / max(.001, b["at"]-a["at"]))
+                    pt = [a["point"][j]*(1-q)+b["point"][j]*q for j in range(2)]
+                    break
+            if fit == "cover":
+                # Keep the verified physical feature visible when portrait crop
+                # removes the wide source edges. Pointer uses this exact crop.
+                dx = int(max(W-dw, min(0, W*(.5 if media.get("subject_focus") else .58)-pt[0]*dw)))
+                dy = int(max(vh-dh, min(0, vh*.5-pt[1]*dh)))
+        # Sample only the visible source rectangle. Previously every frame
+        # allocated a multi-megapixel enlarged landscape just to crop it away.
+        box = (-dx * source.width / dw, -dy * source.height / dh,
+               (W-dx) * source.width / dw, (vh-dy) * source.height / dh)
+        if fit == "cover":
+            box = (max(0,box[0]),max(0,box[1]),min(source.width,box[2]),min(source.height,box[3]))
+            backdrop = source.resize((W,vh),Image.Resampling.BICUBIC,box=box).convert("RGBA")
+        else:
+            backdrop.paste(source.resize((dw,dh),Image.Resampling.BICUBIC),(dx,dy))
+        if pointer and self.meta.get("pointer_assets") and p >= pointer.get("at", .25):
+            # Camera framing and the feature being pointed at are independent.
+            tracks = pointer["tracks"]
+            pt = tracks[0]["point"]
+            for a, b in zip(tracks, tracks[1:]):
+                if p >= b["at"]:
+                    pt = b["point"]
+                elif p >= a["at"]:
+                    q = clamp((p-a["at"]) / max(.001, b["at"]-a["at"]))
+                    pt = [a["point"][j]*(1-q)+b["point"][j]*q for j in range(2)]
+                    break
+            tx, ty = dx + pt[0] * dw, dy + pt[1] * dh
+            phase = min(11, int((p-pointer.get("at", .25)) * duration / .45 * 12))
+            asset = self.resolve(self.meta["pointer_assets"]) / f'{pointer["kind"]}-{phase:02d}.png'
+            with Image.open(asset) as overlay:
+                backdrop.alpha_composite(overlay.convert("RGBA"), (int(tx)-200, int(ty)-200))
+            if pointer.get("label_image"):
+                with Image.open(self.resolve(pointer["label_image"])) as label:
+                    lx = max(16, min(W-label.width-16, int(tx-label.width/2)))
+                    ly = max(24, min(vh-label.height-48, int(ty+75)))
+                    backdrop.alpha_composite(label.convert("RGBA"), (lx, ly))
+            elif pointer.get("label"):
+                label = pointer["label"]
+                f = visual_font(label, "head", 34)
+                lw = f.getlength(label)
+                lx = max(28, min(W-lw-28, tx-lw/2))
+                ly = max(24, min(vh-160, ty+75))
+                dd = ImageDraw.Draw(backdrop)
+                dd.rounded_rectangle((lx-12,ly-4,lx+lw+12,ly+48), radius=9, fill=(22,25,30,235))
+                dd.text((lx,ly),label,font=f,fill=(255,227,71))
+        if media.get("attribution"):
+            credit = str(media["attribution"])
+            f = font("head", 24)
+            dd = ImageDraw.Draw(backdrop)
+            dd.rectangle((0,vh-40,W,vh), fill=(15,18,22,240))
+            dd.text((18,vh-35),credit,font=f,fill=(255,250,235))
+        canvas = Image.new("RGBA", (W,H), (0,0,0,255))
+        canvas.alpha_composite(backdrop,(0,top))
+        if self.headline_image is not None:
+            canvas.alpha_composite(self.headline_image, (0, 0))
+        elif self.meta.get("headline_hi"):
+            draw_hindi_banner(canvas,self.meta["headline_hi"],lt,duration,idx,self.meta.get("headline_highlight",""))
+        if sc.get("beat_text_image"):
+            with Image.open(self.resolve(sc["beat_text_image"])) as label:
+                canvas.alpha_composite(label.convert("RGBA"), ((W-label.width)//2, H-190))
+        elif sc.get("beat_text_hi"):
+            draw_beat_caption(canvas,sc["beat_text_hi"],lt,duration,idx)
+        if self.logo_image is not None:
+            canvas.alpha_composite(self.logo_image, (22, top+24))
+        fade = self.meta.get("end_fade", .27)
+        if fade and t > self.dur-fade:
+            canvas = Image.blend(Image.new("RGBA",(W,H),(0,0,0,255)),canvas,clamp((self.dur-t)/fade))
         return canvas.convert("RGB")
 
     # ---- audio
@@ -2056,7 +2223,7 @@ class Reel:
         if extra_af:
             cmd += ["-af", extra_af]
         cmd += ["-ac", "2", "-ar", str(SR), "-f", "f32le", "-"]
-        raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+        raw = run_hidden(cmd, capture_output=True, check=True).stdout
         return np.frombuffer(raw, np.float32).reshape(-1, 2).copy()
 
     @lru_cache(maxsize=None)
@@ -2092,7 +2259,15 @@ class Reel:
     def build_audio(self):
         mix = np.zeros((int(self.dur * SR), 2), np.float32)
         if self.meta.get("voice"):
-            self.put(mix, self.load_audio(self.resolve(self.meta["voice"])), self.meta.get("voice_at", 0.0))
+            profile = self.meta.get("audio_profile") == "punchy-facts"
+            pitch = max(-3.0, min(3.0, float(self.meta.get("voice_pitch_semitones", 0))))
+            filters = []
+            if profile:
+                filters = ["highpass=f=80", "equalizer=f=2800:t=q:w=1:g=2",
+                           "acompressor=threshold=0.125:ratio=3:attack=5:release=75:makeup=1.4"]
+                if pitch:
+                    filters.insert(0, f"rubberband=pitch={2**(pitch/12):.6f}")
+            self.put(mix, self.load_audio(self.resolve(self.meta["voice"]), extra_af=','.join(filters) or None), self.meta.get("voice_at", 0.0))
         mu = self.meta.get("music")
         if mu:
             path = self.resolve(mu["file"]) if mu.get("file") else None
@@ -2130,13 +2305,38 @@ class Reel:
     def mux(self, video_path):
         wav = self.out.with_name("_paperdoc_mix.wav")
         data = np.clip(self.build_audio(), -1, 1).astype(np.float32)
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "f32le", "-ar", str(SR), "-ac", "2", "-i", "-", str(wav)],
+        run_hidden(["ffmpeg", "-v", "error", "-y", "-f", "f32le", "-ar", str(SR), "-ac", "2", "-i", "-", str(wav)],
                        input=data.tobytes(), check=True)
-        err = subprocess.run(["ffmpeg", "-i", str(wav), "-af", "ebur128", "-f", "null", "-"],
+        if self.meta.get("audio_profile") == "punchy-facts":
+            target = max(-14.0, min(-8.0, float(self.meta.get("lufs", -8.5))))
+            peak = max(-3.0, min(-1.0, float(self.meta.get("true_peak", -1.5))))
+            normalizer = f"loudnorm=I={target}:TP={peak}:LRA=4"
+            report = run_hidden(["ffmpeg", "-hide_banner", "-i", str(wav), "-af", normalizer+":print_format=json", "-f", "null", "-"],capture_output=True,text=True,check=True).stderr
+            metrics = json.loads(report[report.rfind('{'):report.rfind('}')+1])
+            if all(math.isfinite(float(metrics[k])) for k in ("input_i","input_tp","input_lra","input_thresh","target_offset")):
+                normalizer += f":measured_I={metrics['input_i']}:measured_TP={metrics['input_tp']}:measured_LRA={metrics['input_lra']}:measured_thresh={metrics['input_thresh']}:offset={metrics['target_offset']}:linear=true"
+            run_hidden(["ffmpeg","-v","error","-y","-i",str(video_path),"-i",str(wav),"-filter_complex",f"[1:a]{normalizer}[a]","-map","0:v","-map","[a]","-c:v","copy","-c:a","aac","-b:a","320k","-ar","48000","-shortest","-movflags","+faststart",str(self.out)],check=True)
+            # Very peaky narration can remain quieter than the target when
+            # loudnorm protects true peaks. Check the encoded result, then add
+            # bounded gain with an oversampled limiter instead of trusting the
+            # requested LUFS value as a measurement.
+            output_report = run_hidden(["ffmpeg","-hide_banner","-i",str(self.out),"-af","loudnorm=print_format=json","-f","null","-"],capture_output=True,text=True,check=True).stderr
+            encoded = json.loads(output_report[output_report.rfind('{'):output_report.rfind('}')+1])
+            correction = min(3.0, max(0.0, target-float(encoded['input_i'])))
+            if correction > 1.2:
+                corrected = self.out.with_name('_paperdoc_levelled.mp4')
+                run_hidden(["ffmpeg","-v","error","-y","-i",str(self.out),"-af",f"aresample=192000,volume={correction:.2f}dB,alimiter=limit=0.79:attack=1:release=30:level=false,aresample=48000","-c:v","copy","-c:a","aac","-b:a","320k","-movflags","+faststart",str(corrected)],check=True)
+                corrected.replace(self.out)
+            metrics['encoded_before_correction']=encoded
+            metrics['post_gain_db']=correction if correction>1.2 else 0
+            self.out.with_suffix('.audio-metrics.json').write_text(json.dumps({'target_lufs':target,'true_peak_limit':peak,'mix_measurement':metrics},indent=2),encoding='utf-8')
+            wav.unlink()
+            return
+        err = run_hidden(["ffmpeg", "-i", str(wav), "-af", "ebur128", "-f", "null", "-"],
                              capture_output=True, text=True).stderr
         measured = float(err.rsplit("I:", 1)[1].split("LUFS")[0])
         gain = self.meta.get("lufs", -14.0) - measured if math.isfinite(measured) else 0.0
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(video_path), "-i", str(wav),
+        run_hidden(["ffmpeg", "-v", "error", "-y", "-i", str(video_path), "-i", str(wav),
                         "-filter_complex", f"[1:a]volume={gain:.2f}dB,alimiter=limit=0.75:level=false[a]",
                         "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
                         "-ar", "48000", "-shortest", "-movflags", "+faststart", str(self.out)], check=True)
@@ -2145,9 +2345,14 @@ class Reel:
     def render(self):
         self.out.parent.mkdir(parents=True, exist_ok=True)
         silent = self.out.with_name("_paperdoc_video.mp4")
-        enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+        output_size = self.meta.get("output_size", [W, H])
+        ow, oh = map(int, output_size)
+        if ow < W or oh < H or ow % 2 or oh % 2:
+            raise ValueError("Output canvas must contain the full composition and have even dimensions")
+        canvas_filter = ["-vf", f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2:black,setsar=1"]
+        enc = popen_hidden(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                                 "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-                                "-c:v", "libx264", "-preset", os.getenv("PAPERDOC_PRESET", "medium"),
+                                *canvas_filter, "-c:v", "libx264", "-preset", os.getenv("PAPERDOC_PRESET", "veryfast"),
                                 "-crf", os.getenv("PAPERDOC_CRF", "17"), "-pix_fmt", "yuv420p",
                                 str(silent)], stdin=subprocess.PIPE)
         n = int(self.dur * FPS)

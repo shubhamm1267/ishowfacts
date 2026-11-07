@@ -10,24 +10,45 @@ import {
   stat,
   readdir,
   copyFile,
+  rename,
   rm
 } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { stockVideo,createStockSession,createStockMediaCache,prefetchStockVideo,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
+import { preparePointerAssets, prepareHeadlineAssets, prepareOverlayTextAssets, normalizeHookTitle } from './lib/reference-style.mjs';
+import { prepareExplainers } from './lib/explainer.mjs';
+import {heygenVoice,heygenPerformance,NATURAL_SPEECH_TRIM,DEFAULT_HEYGEN_VOICE,HEYGEN_FREE_MODEL,heygenModel,heygenSpeechMode,validateHeygenSettings} from './lib/heygen.mjs';
+import {recordStage,timingSummary} from './lib/job-timing.mjs';
+import {runSceneWorkers,mediaBudget,assignMediaTypes,mediaBudgetIssues,createProcessLimiter} from './lib/media-workers.mjs';
+import {framingReviewer,reviewRenderedVideo} from './lib/visual-quality.mjs';
+import {QualityError,narrationTempo} from './lib/quality.mjs';
+import {hookContextFor,hookFamily} from './lib/episode-prompt.mjs';
 
 import {
   chooseTopic,
+  topicSelectionContext,
+  topicWasUsed,
+  randomFactsSource,
   wikipediaSource,
   writeEpisode,
+  prepareMediaContracts,
   commonsImage,
   openverseImage,
   freesound,
   cartesiaVoice,
+  fishVoice, fishVoiceId, FISH_FREE_MODEL, validateFishSettings,
   demoEpisode,
   clamp,
   inspectImage,
+  inspectFocus,
+  inspectVideoFrames,
+  auditHindiNarration,
+  auditSoundCue,
+  gemini,
   auditCutout,
   mediaSearchQueries,
+  repairMediaBrief,
   resolveVoiceProfile,
   runWithProviders
 } from './lib/core.mjs';
@@ -51,6 +72,7 @@ const PUBLIC = join(
 const JOBS = resolve(
   process.env.JOBS_DIR || join(DIR, 'jobs')
 );
+const stockMediaCache=createStockMediaCache({directory:join(JOBS,'.stock-cache')});
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 4300);
@@ -64,14 +86,15 @@ let activeJob = null;
 
 const jobs = new Map();
 
-const VIDEO_TTL_MS = 10 * 60 * 1000;
+export const VIDEO_TTL_MS = 30 * 60 * 1000;
 
-async function expireJob(id) {
+export async function expireJob(id) {
   if (!/^[a-f0-9-]{36}$/i.test(id)) {
     return;
   }
 
-  const folder = join(JOBS, id);
+  const folder = resolve(JOBS, id);
+  if(!folder.startsWith(JOBS+sep))throw Error('Job cleanup path outside jobs directory');
   const statusFile = join(folder, 'status.json');
 
   let saved;
@@ -144,6 +167,7 @@ async function cleanExpiredJobs() {
       await expireJob(entry.name);
     }
   }
+  try{await stockMediaCache.prune();}catch{/* An optional cache cannot block job cleanup. */}
 }
 
 function safeJob(job) {
@@ -166,6 +190,12 @@ function safeJob(job) {
   return {
     id,
     status,
+    youtubeTitle: job.youtubeTitle || null,
+    category:job.category||null,
+    size: job.size || [1080,1920],
+    performance:timingSummary(job)||job.performance||null,
+    uploadTitleUrl: status === 'complete' ? `/api/jobs/${id}/title` : null,
+    uploadDescriptionUrl: status === 'complete' ? `/api/jobs/${id}/description` : null,
     stage,
     progress,
     title,
@@ -201,6 +231,7 @@ function safeJob(job) {
 }
 
 async function checkpoint(job, stage, progress) {
+  recordStage(job,stage);
   job.stage = stage;
   job.progress = progress;
 
@@ -234,7 +265,7 @@ export function validateInput(data) {
 
   const voice = resolveVoiceProfile(
     data.voiceAccent ||
-    (data.language === 'en' ? 'en-US' : 'hi-IN-ayush')
+    (data.language === 'en' ? 'en-US' : 'hi-IN-anuj')
   );
 
   const language = voice.language;
@@ -251,7 +282,7 @@ export function validateInput(data) {
     'edgy'
   ].includes(data.humorIntensity)
     ? data.humorIntensity
-    : 'cheeky';
+    : 'edgy';
 
   const backgroundPalette = [
     'white',
@@ -262,9 +293,9 @@ export function validateInput(data) {
     : 'random';
 
   const seconds = clamp(
-    Number(data.seconds) || 25,
+    Number(data.seconds) || 30,
     15,
-    50
+    100
   );
 
   const demo = data.demo === true;
@@ -279,9 +310,20 @@ export function validateInput(data) {
   }
 
   const providerKeys = {};
+  const voiceProvider=data.voiceProvider||process.env.VOICE_PROVIDER||(process.env.FISH_API_KEY?'fish':process.env.HEYGEN_API_KEY?'heygen':'cartesia');
+  if(!['fish','heygen','cartesia'].includes(voiceProvider))throw Error('Unsupported voice provider');
 
   const allowedKeys = [
+    'FISH_API_KEY',
+    'FISH_VOICE_ID','FISH_VOICE_HI_ID','FISH_VOICE_EN_ID',
+    'HEYGEN_API_KEY',
+    'HEYGEN_VOICE_HI_ID',
+    'HEYGEN_VOICE_EN_ID',
+    'HEYGEN_PITCH_SEMITONES',
+    'HEYGEN_TEMPO',
     'GEMINI_API_KEY',
+    'GEMINI_API_KEY_2',
+    'GEMINI_API_KEY_3',
     'GEMINI_MODEL',
     'CARTESIA_API_KEY',
     'CARTESIA_MODEL',
@@ -317,31 +359,54 @@ export function validateInput(data) {
   if (
     !demo &&
     (
-      !(providerKeys.GEMINI_API_KEY || process.env.GEMINI_API_KEY) ||
-      !(providerKeys.CARTESIA_API_KEY || process.env.CARTESIA_API_KEY)
+      !['GEMINI_API_KEY', 'GEMINI_API_KEY_2', 'GEMINI_API_KEY_3']
+        .some(name => providerKeys[name] || process.env[name]) ||
+      !(voiceProvider==='fish'?(providerKeys.FISH_API_KEY||process.env.FISH_API_KEY):voiceProvider==='heygen'?(providerKeys.HEYGEN_API_KEY||process.env.HEYGEN_API_KEY):(providerKeys.CARTESIA_API_KEY || process.env.CARTESIA_API_KEY))
     )
   ) {
     throw Error(
-      'Gemini and Cartesia keys are required. Open API Settings.'
+      `Gemini and ${voiceProvider==='fish'?'Fish Audio':voiceProvider==='heygen'?'HeyGen':'Cartesia'} keys are required. Open API Settings.`
     );
   }
 
+  const logoDataUrl=validateLogoUpload(data.logoDataUrl);
   return {
     topic,
     language,
+    factMode:data.factMode==='random'?'random':'topic',
     seconds,
     voiceAccent: voice.key,
+    voiceProvider,
     voiceStyle,
     humorIntensity,
     backgroundPalette,
+    mediaMode: data.visualStyle==='paper'&&data.mediaMode==='photos'?'photos':'mixed',
+    visualStyle: data.visualStyle === 'paper' ? 'paper' : 'reference-news',
+    mediaFit: data.mediaFit === 'contain' ? 'contain' : 'cover',
+    logoDataUrl,
     demo,
     providerKeys
   };
 }
 
+export function validateLogoUpload(value){
+  if(value===undefined||value===null||value==='')return '';
+  if(typeof value!=='string'||value.length>1_400_000)throw Error('Logo must be an image smaller than 1 MB');
+  const match=/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if(!match)throw Error('Logo must be a PNG, JPEG or WebP image');
+  const bytes=Buffer.from(match[2],'base64');
+  if(bytes.length<24||bytes.length>1_000_000||bytes.toString('base64')!==match[2])throw Error('Invalid logo image data');
+  const png=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+  const jpeg=bytes[0]===255&&bytes[1]===216;
+  const webp=bytes.subarray(0,4).toString()==='RIFF'&&bytes.subarray(8,12).toString()==='WEBP';
+  if(!({png,jpeg,webp})[match[1]])throw Error('Logo content does not match its image type');
+  return value;
+}
+
 // Executes Python and FFmpeg with a configurable timeout.
+const limitProcess=createProcessLimiter(3);
 function processTool(command, args, onText) {
-  return new Promise((resolveJob, rejectJob) => {
+  return limitProcess(()=>new Promise((resolveJob, rejectJob) => {
     const configuredMinutes = Number(
       process.env.RENDER_PROCESS_TIMEOUT_MINUTES || 45
     );
@@ -361,6 +426,7 @@ function processTool(command, args, onText) {
     const child = spawn(command, args, {
       cwd: ROOT,
       env: process.env,
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32'
     });
@@ -442,7 +508,7 @@ function processTool(command, args, onText) {
         )
       );
     });
-  });
+  }));
 }
 
 async function mediaSeconds(path) {
@@ -471,18 +537,22 @@ async function mediaSeconds(path) {
   return seconds;
 }
 
-async function makeVoice(
+export async function makeVoice(
   episode,
   voiceAccent,
   voiceStyle,
-  folder
+  folder,
+  voiceProvider='cartesia'
 ) {
   const files = [];
   const timing = [];
+  const durations = [];
 
   let t = 0;
 
-  for (let i = 0; i < episode.scenes.length; i++) {
+  let nextVoice = 0;
+  const makeNextVoice = async () => { while (nextVoice < episode.scenes.length) {
+    const i = nextVoice++;
     const path = join(
       folder,
       `voice_${String(i).padStart(2, '0')}.wav`
@@ -493,7 +563,9 @@ async function makeVoice(
       `voice_${String(i).padStart(2, '0')}_raw.wav`
     );
 
-    await cartesiaVoice(
+    if(voiceProvider==='fish')await fishVoice(episode.scenes[i].narration,voiceAccent.startsWith('en')?'en':'hi',raw,episode.scenes[i],voiceStyle);
+    else if(voiceProvider==='heygen')await heygenVoice(episode.scenes[i].narration,voiceAccent.startsWith('en')?'en':'hi',raw,episode.scenes[i],voiceStyle);
+    else await cartesiaVoice(
       episode.scenes[i].narration,
       voiceAccent,
       raw,
@@ -501,6 +573,7 @@ async function makeVoice(
       voiceStyle
     );
 
+    const tempo=voiceProvider==='fish'?narrationTempo(episode.scenes[i].narration,await mediaSeconds(raw),{energetic:voiceStyle==='energetic',language:episode.language||(voiceAccent.startsWith('en')?'en':'hi')}):1;
     await processTool(
       'ffmpeg',
       [
@@ -511,7 +584,8 @@ async function makeVoice(
         raw,
 
         '-af',
-        'silenceremove=start_periods=1:start_duration=0:start_threshold=-42dB:stop_periods=-1:stop_duration=0.31:stop_threshold=-42dB,apad=pad_dur=0.05',
+        [tempo>1?`atempo=${tempo}`:null,voiceProvider==='heygen'?heygenPerformance(episode.scenes[i],voiceStyle,voiceAccent.startsWith('en')?'en':'hi').filter:null,
+         voiceProvider!=='cartesia'?NATURAL_SPEECH_TRIM:'silenceremove=start_periods=1:start_duration=0:start_threshold=-42dB:stop_periods=-1:stop_duration=0.31:stop_threshold=-42dB,apad=pad_dur=0.05'].filter(Boolean).join(','),
 
         '-ar',
         '44100',
@@ -525,15 +599,11 @@ async function makeVoice(
 
     const seconds = await mediaSeconds(path);
 
-    files.push(path);
-
-    timing.push({
-      start: t,
-      duration: seconds
-    });
-
-    t += seconds;
-  }
+    files[i] = path;
+    durations[i] = seconds;
+  }};
+  await Promise.all(Array.from({length:Math.min(2,episode.scenes.length)},makeNextVoice));
+  for(const seconds of durations){timing.push({start:t,duration:seconds});t+=seconds;}
 
   const list = join(folder, 'concat.txt');
 
@@ -565,7 +635,7 @@ async function makeVoice(
   );
 
   const hindiPitch =
-    voiceAccent.startsWith('hi-IN') &&
+    voiceProvider==='cartesia'&&voiceAccent.startsWith('hi-IN') &&
     Number.isFinite(pitchSetting)
       ? Math.max(.94, Math.min(1.22, pitchSetting))
       : 1;
@@ -580,11 +650,8 @@ async function makeVoice(
     );
   }
 
-  filters.push(
-    'acompressor=threshold=0.11:ratio=2.8:attack=5:release=90:makeup=1.6',
-    'loudnorm=I=-16:LRA=9:TP=-1.5',
-    'alimiter=limit=0.96'
-  );
+  if(voiceProvider!=='cartesia')filters.push('loudnorm=I=-18:LRA=11:TP=-2');
+  else filters.push('acompressor=threshold=0.11:ratio=2.8:attack=5:release=90:makeup=1.6','loudnorm=I=-16:LRA=9:TP=-1.5','alimiter=limit=0.96');
 
   await processTool(
     'ffmpeg',
@@ -793,9 +860,17 @@ async function runJob(job, input) {
   const assets = join(folder, 'assets');
 
   try {
+    if(!input.demo&&input.voiceProvider==='heygen')validateHeygenSettings();
+    if(!input.demo&&input.voiceProvider==='fish')validateFishSettings(input.language);
     await mkdir(assets, {
       recursive: true
     });
+    let preparedLogo='';
+    if(input.logoDataUrl){
+      const logoSource=join(assets,'uploaded-logo');preparedLogo=join(assets,'logo.png');
+      await writeFile(logoSource,Buffer.from(input.logoDataUrl.split(',')[1],'base64'));
+      await processTool(process.env.PYTHON||'python3',['scripts/prepare_logo.py',logoSource,preparedLogo]);
+    }
 
     await checkpoint(
       job,
@@ -803,21 +878,49 @@ async function runJob(job, input) {
       5
     );
 
-    const topic = input.demo
-      ? 'Octopus'
-      : (
-          input.topic ||
-          await chooseTopic()
-        );
-
-    job.topic = topic;
-
-    const source = input.demo
-      ? {
-          title: 'Offline demonstration',
-          url: null
+    // Permanent compact registry is separate from expiring job assets.
+    const topicHistoryPath=join(DIR,'data','topic-history.json');
+    let topicHistory=[];
+    if(!input.demo){
+      try{
+        const saved=JSON.parse(await readFile(topicHistoryPath,'utf8'));
+        if(!Array.isArray(saved)||saved.some(row=>typeof row?.topic!=='string'))throw Error('Invalid permanent topic history');
+        topicHistory=saved;
+      }catch(error){
+        if(error.code!=='ENOENT')throw error;
+        try{const saved=JSON.parse(await readFile(join(JOBS,'.topic-history.json'),'utf8'));if(Array.isArray(saved))topicHistory=saved.filter(row=>typeof row?.topic==='string');}catch(error){if(error.code!=='ENOENT')throw error;}
+        // Recover previous delivered samples on first migration, not on every job.
+        let names=[];try{names=await readdir(join(ROOT,'samples'));}catch(error){if(error.code!=='ENOENT')throw error;}
+        for(const name of names.filter(name=>name.endsWith('-episode.json'))){
+          try{
+            const episode=JSON.parse(await readFile(join(ROOT,'samples',name),'utf8'));
+            for(const article of episode.research?.articles||[episode.research||{title:episode.topic}]){
+              if(article?.title&&!topicWasUsed(article,topicHistory))topicHistory.push({topic:article.title,url:article.url||null,category:'custom',createdAt:new Date().toISOString(),origin:'sample-migration'});
+            }
+          }catch{/* Unrelated legacy sample metadata cannot invalidate saved history. */}
         }
-      : await wikipediaSource(topic);
+      }
+    }
+    let topic,source;
+    if(input.demo){topic='Octopus';source={title:'Offline demonstration',url:null};}
+    else if(input.factMode==='random'){
+      source=await randomFactsSource({history:topicHistory,language:input.language});
+      topic='Random facts: '+source.articles.map(a=>a.title).join(', ');
+    }else{
+      for(let attempt=0;attempt<3;attempt++){
+        const candidate=input.topic||await chooseTopic({history:topicHistory,language:input.language});
+        if(input.topic&&topicWasUsed(candidate,topicHistory))throw Error('This topic has already been used. Choose a new subject.');
+        const researched=await wikipediaSource(candidate);
+        if(input.topic&&topicWasUsed(researched,topicHistory))throw Error('This topic has already been used. Choose a new subject; changing its title or language does not make it new.');
+        if(!topicWasUsed(researched,topicHistory)){
+          topic=input.topic||researched.title;
+          source={...researched,...(!input.topic?{category:topicSelectionContext(topicHistory).categories[0]}:{})};break;
+        }
+      }
+      if(!source)throw Error('Automatic topic selection resolved to a recently used source');
+    }
+    job.topic=topic;
+    job.category=source.articles?source.articles.map(a=>a.category.label).join(' / '):source.category?.label||null;
 
     await checkpoint(
       job,
@@ -825,6 +928,23 @@ async function runJob(job, input) {
       15
     );
 
+    const strictMedia=!input.demo&&input.visualStyle==='reference-news'&&input.mediaMode==='mixed'
+      ?mediaBudget(input.seconds):null;
+    let hookHistory=[];
+    if(!input.demo){
+      try{const saved=JSON.parse(await readFile(join(JOBS,'.hook-history.json'),'utf8'));if(Array.isArray(saved))hookHistory=saved.filter(r=>typeof r?.opening==='string').slice(-20);}catch{/* First run or deleted history. */}
+    }
+
+    if(!input.demo){
+      const entries=(source.articles||[source]).map(article=>({topic:article.title,url:article.url,category:article.category?.id||'custom',createdAt:new Date().toISOString()}));
+      await mkdir(dirname(topicHistoryPath),{recursive:true});
+      const pendingHistory=topicHistoryPath+'.'+job.id+'.tmp';
+      await writeFile(pendingHistory,JSON.stringify([...topicHistory,...entries],null,2));
+      await rename(pendingHistory,topicHistoryPath);
+      await writeFile(join(folder,'topic-selection.json'),JSON.stringify({automatic:!input.topic||input.factMode==='random',category:job.category,historyCount:topicHistory.length,duplicateCheck:'full permanent history before drafting',recentTopics:topicHistory.slice(-60).map(row=>row.topic),selected:entries},null,2));
+    }
+    const hookContext=hookContextFor(hookHistory.filter(row=>(row.language||'hi')===input.language));
+    if(strictMedia&&process.env.ENABLE_STOCK_VIDEO==='0')throw Error('Enable stock video for video-first generation');
     const episode = input.demo
       ? demoEpisode()
       : await writeEpisode(
@@ -832,19 +952,34 @@ async function runJob(job, input) {
           source,
           input.language,
           input.seconds,
-          input.humorIntensity
+          input.humorIntensity,
+          {debugFolder:folder,onStage:stage=>checkpoint(job,stage,18),mediaPolicy:strictMedia,hookContext}
         );
+
+    if(!input.demo&&input.visualStyle==='reference-news'){
+      await checkpoint(job,'Checking context and visible-evidence media contracts',23);
+      const contracts=await prepareMediaContracts(episode,source);
+      await writeFile(join(folder,'media-contracts.json'),JSON.stringify(contracts,null,2));
+    }
+
+    if(!input.demo){
+      const opening=episode.scenes[0].narration;
+      await writeFile(join(JOBS,'.hook-history.json'),JSON.stringify([...hookHistory,{opening,style:hookFamily(opening),language:input.language}].slice(-20),null,2));
+    }
+
+    if(strictMedia)assignMediaTypes(episode,strictMedia);
+    const mediaConcurrency=strictMedia?3:2;
 
     job.title = episode.title;
 
-    job.sources = source.url
+    job.sources = source.articles?.map(article=>({name:article.title,url:article.url})) || (source.url
       ? [
           {
             name: source.title,
             url: source.url
           }
         ]
-      : [];
+      : []);
 
     await writeFile(
       join(folder, 'episode.json'),
@@ -858,9 +993,18 @@ async function runJob(job, input) {
       )
     );
 
+    const stockSession=createStockSession({cache:stockMediaCache});
+    const mediaLookup=(key,operation)=>stockLookup(stockSession,key,operation);
+    // Metadata-only searches overlap voice generation/audit. Actual HD acquisition
+    // and frame/crop checks still wait for the final measured narration timing.
+    const stockQueries=[...new Set(episode.scenes.filter(scene=>scene.visual==='video').map(scene=>scene.videoQuery||scene.visualQuery))];
+    const stockPrefetch=!input.demo&&input.mediaMode!=='photos'&&process.env.ENABLE_STOCK_VIDEO!=='0'
+      ?runSceneWorkers(stockQueries.length,2,i=>prefetchStockVideo(stockQueries[i],{session:stockSession})).catch(()=>[])
+      :Promise.resolve();
+
     await checkpoint(
       job,
-      'Preparing Cartesia narrator audio',
+      `Preparing ${input.voiceProvider==='fish'?'Fish Audio S2.1 Pro Free':input.voiceProvider==='heygen'?'HeyGen '+(heygenSpeechMode()==='catalog'?'shubham-voice':'Turbo Free'):'Cartesia'} narrator audio`,
       25
     );
 
@@ -872,7 +1016,7 @@ async function runJob(job, input) {
       4
     );
 
-    const narration = input.demo
+    let narration = input.demo
       ? {
           timing: episode.scenes.map(
             (_, i) => ({
@@ -886,8 +1030,28 @@ async function runJob(job, input) {
           episode,
           input.voiceAccent,
           input.voiceStyle,
-          assets
+          assets,
+          input.voiceProvider
         );
+
+    if(!input.demo){
+      const measured=narration.timing.reduce((sum,shot)=>sum+shot.duration,0);
+      if(!(measured>20))throw Error(`Narration too short (${measured.toFixed(2)}s): videos must exceed 20 seconds. Regenerate with a fuller script.`);
+    }
+
+    if(!input.demo){
+      await checkpoint(job,'Checking '+(input.language==='en'?'English':'Hindi')+' pronunciation and complete narration',36);
+      for(let attempt=0;attempt<2;attempt++){
+        try{
+          const review=await auditHindiNarration(narration.voice,episode,{requireNatural:true});
+          await writeFile(join(folder,'audio-review.json'),JSON.stringify(review,null,2));break;
+        }catch(error){
+          await writeFile(join(folder,`audio-review-error-${attempt}.json`),JSON.stringify({error:error.message},null,2));
+          if(attempt||!/^(Hindi|English) voice review did not pass/.test(error.message))throw error;
+          narration=await makeVoice(episode,input.voiceAccent,input.voiceStyle,assets,input.voiceProvider);
+        }
+      }
+    }
 
     await checkpoint(
       job,
@@ -895,21 +1059,87 @@ async function runJob(job, input) {
       43
     );
 
-    const images = [];
+    const images = new Array(episode.scenes.length).fill(null);
     const credits = [];
     const usedImages = new Set();
+    let videoCount = 0, videoReservations = 0, completedMedia = 0;
+    const maxVideos = strictMedia?.videos||clamp(Number(process.env.STOCK_VIDEO_MAX_SCENES) || 3, 1, 6);
+    const verifyFraming=framingReviewer({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets,fit:input.mediaFit});
+    let visualPass=0;
 
-    for (
-      let i = 0;
-      i < episode.scenes.length;
-      i++
-    ) {
+    const prepareSceneMedia = async i => {
+      job.stage=`Checking licensed visual ${i+1}/${episode.scenes.length}`;
       const dest = join(
         assets,
         `image_${i}.jpg`
       );
 
       try {
+        const scene = episode.scenes[i];
+        const sceneSource=source.articles?.[scene.factIndex]||source;
+        if (!input.demo && (visualPass===0||strictMedia) && input.mediaMode !== 'photos' && process.env.ENABLE_STOCK_VIDEO !== '0'
+            && videoCount + videoReservations < maxVideos && scene.visual === 'video') {
+          videoReservations++;
+          try {
+            const clip = await stockVideo(scene.videoQuery || scene.visualQuery, join(assets, `clip_${i}.mp4`), {
+              used: usedImages,
+              session:stockSession,
+              subject:scene.subjectEntity||sceneSource.title||topic,
+              seconds:narration.timing[i].duration+.75,
+              creditPlacement:'description',
+              inspect: async media => {
+                const probe = JSON.parse(await processTool('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+                  '-show_entries', 'stream=width,height', '-of', 'json', media.file]));
+                const dimensions = probe.streams?.[0];
+                if (!(Math.min(dimensions?.width||0,dimensions?.height||0)>=1080)) return null;
+                const frames = join(assets, `clip_frames_${i}`);
+                await mkdir(frames, { recursive: true });
+                const fps = clamp(Number(process.env.RENDER_FPS) || 24, 8, 60);
+                const seconds = narration.timing[i].duration + .5;
+                // Review three frames first; rejected candidates never expand
+                // into hundreds of JPEGs or incur full frame-sequence work.
+                const reviewPoints=[.12,.5,.85];
+                const focusImages=reviewPoints.map((_,index)=>join(frames,`review-${index}.jpg`));
+                // Decode once for all three review timestamps instead of
+                // launching three competing decoders for the same clip.
+                await processTool('ffmpeg',['-v','error','-y','-stream_loop','-1','-i',media.file,
+                  ...reviewPoints.flatMap((fraction,index)=>[
+                    '-ss',String(narration.timing[i].duration*fraction),'-frames:v','1','-an',
+                    '-vf','scale=1920:1920:force_original_aspect_ratio=decrease',focusImages[index]])]);
+                let framing={};
+                if(input.visualStyle==='reference-news'){
+                  framing=await verifyFraming(focusImages,scene,topic,`video-${i}-${visualPass}-${randomUUID()}`);
+                  if(!framing)return null;
+                }else if(!await inspectVideoFrames(focusImages,scene.subjectEntity||scene.visualQuery,scene.narration,topic))return null;
+                let focus = [];
+                if (scene.pointOut) {
+                  try { focus = await inspectFocus(focusImages, scene.pointOut.target, scene.narration); }
+                  catch { job.warnings.push(`Scene ${i+1}: pointer location unverified; pointer omitted`); }
+                }
+                await processTool('ffmpeg', ['-v', 'error', '-y', '-stream_loop', '-1', '-i', media.file,
+                  '-t', String(seconds), '-an', '-vf', `fps=${fps},scale=1920:1920:force_original_aspect_ratio=decrease`,
+                  '-start_number', '0', join(frames, '%06d.jpg')]);
+                const files=(await readdir(frames)).filter(n=>/^\d{6}\.jpg$/.test(n));
+                if(files.length<2)return null;
+                return { frames, fps, frameCount: files.length, width: dimensions.width, height: dimensions.height, focus,...framing };
+              }
+            });
+            if (clip) {
+              videoCount++;
+              const { frames, fps, frameCount, width, height, focus,subjectFocus,mediaFit,visualReview, ...credit } = clip;
+              credits.push({ ...credit, mediaType: 'video' });
+              images[i] = { path: clip.file, video: true, frames, fps, frameCount, cutout: false,
+                width, height,
+                focus,subjectFocus,mediaFit,visualReview,
+                attribution: clip.requiresAttribution ? clip.attribution : '' };
+              scene.mediaUsed = 'video';
+              return;
+            }
+          } catch (e) {
+            job.warnings.push(`Scene ${i + 1}: stock video unavailable (${e.message}); trying a verified photo`);
+          } finally { videoReservations--; }
+        }
+        // Footage first; a verified photo is the allowed fallback.
         if (
           episode.scenes[i].visual === 'illustration' ||
           (
@@ -917,8 +1147,8 @@ async function runJob(job, input) {
             episode.scenes[i].diagram?.nodes?.length >= 2
           )
         ) {
-          images.push(null);
-          continue;
+          images[i] = null;
+          return;
         }
 
         if (input.demo) {
@@ -926,27 +1156,27 @@ async function runJob(job, input) {
             await makeDemoArt(dest);
           }
 
-          images.push({
+          images[i] = {
             path: join(
               assets,
               'image_0.jpg'
             ),
             cutout: false
-          });
+          };
 
         } else {
           let selected = null;
 
           const needsCutout =
-            episode.scenes[i].visual === 'cutout';
+            input.visualStyle === 'paper' && episode.scenes[i].visual === 'cutout';
 
           const queries = mediaSearchQueries(
             episode.scenes[i],
-            source,
+            sceneSource,
             topic
           );
 
-          const attempts = Math.max(
+          const attempts = Math.min(visualPass?2:(strictMedia?3:8),Math.max(
             1,
             Math.min(
               8,
@@ -954,7 +1184,7 @@ async function runJob(job, input) {
                 process.env.IMAGE_CANDIDATES || 6
               )
             )
-          );
+          ));
 
           for (
             let attempt = 0;
@@ -974,7 +1204,8 @@ async function runJob(job, input) {
               media = await commonsImage(
                 search,
                 dest,
-                usedImages
+                usedImages,
+                {lookup:mediaLookup}
               );
             } catch {
               // Try Openverse.
@@ -985,7 +1216,8 @@ async function runJob(job, input) {
                 media = await openverseImage(
                   search,
                   dest,
-                  usedImages
+                  usedImages,
+                  {lookup:mediaLookup}
                 );
               } catch {
                 // Try another candidate.
@@ -1003,10 +1235,12 @@ async function runJob(job, input) {
             let guidance = null;
 
             if (
-              process.env.GEMINI_IMAGE_QA !== '0'
+              input.visualStyle==='reference-news'||process.env.GEMINI_IMAGE_QA !== '0'
             ) {
               try {
-                guidance = await inspectImage(
+                guidance = input.visualStyle==='reference-news'
+                  ? await verifyFraming([dest],scene,topic,`photo-${i}-${visualPass}-${attempt}`)
+                  : await inspectImage(
                   dest,
                   episode.scenes[i].subjectEntity ||
                     episode.scenes[i].visualQuery,
@@ -1020,8 +1254,8 @@ async function runJob(job, input) {
                 );
 
                 if (
-                  !guidance.matches ||
-                  guidance.confidence < .65
+                  !guidance || (input.visualStyle!=='reference-news'&&(!guidance.matches ||
+                  guidance.confidence < .65))
                 ) {
                   // Candidate rejected; silently try the next image.
 
@@ -1033,7 +1267,7 @@ async function runJob(job, input) {
                 );
 
                 if (
-                  process.env.STRICT_IMAGE_QA !== '0'
+                  input.visualStyle==='reference-news'||process.env.STRICT_IMAGE_QA !== '0'
                 ) {
                   continue;
                 }
@@ -1090,12 +1324,38 @@ async function runJob(job, input) {
               image: {
                 path: bbox ? cutDest : dest,
                 cutout: !!bbox,
-                bbox
+                bbox,
+                subjectFocus:guidance?.subjectFocus,mediaFit:guidance?.mediaFit,visualReview:guidance?.visualReview
               },
               guidance
             };
 
             break;
+          }
+
+          // A separate licensed source can supply an honest still photograph
+          // when public photo search cannot find a verified image. It remains
+          // a static JPEG, never an extra moving-video scene or a reused clip.
+          if(!selected&&strictMedia&&visualPass>0){
+            const stillSource=await stockVideo(scene.videoQuery||scene.visualQuery,join(assets,`photo_source_${i}.mp4`),{
+              used:usedImages,subject:scene.subjectEntity||sceneSource.title||topic,session:stockSession,creditPlacement:'description',
+              inspect:async media=>{
+                const probe=JSON.parse(await processTool('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height:format=duration','-of','json',media.file]));
+                const dimensions=probe.streams?.[0];
+                if(Math.min(dimensions?.width||0,dimensions?.height||0)<1080)return null;
+                const stillAt=Math.min(1,Number(probe.format?.duration)/2||.5);
+                await processTool('ffmpeg',['-v','error','-y','-ss',String(stillAt),'-i',media.file,'-frames:v','1','-an','-q:v','2',dest]);
+                const framing=await verifyFraming([dest],scene,topic,`still-${i}-${randomUUID()}`);
+                return framing?{...framing,width:dimensions.width,height:dimensions.height,stillAt}:null;
+              }
+            });
+            if(stillSource){
+              const {subjectFocus,mediaFit,visualReview,width,height,stillAt,...credit}=stillSource;
+              selected={media:{...credit,file:dest,mediaType:'photo',sourceMediaType:'video',sourceFrameAt:stillAt},
+                image:{path:dest,cutout:false,subjectFocus,mediaFit,visualReview,width,height,
+                  attribution:credit.requiresAttribution?credit.attribution:''},guidance:null};
+              scene.mediaUsed='photo';
+            }
           }
 
           if (selected) {
@@ -1151,27 +1411,71 @@ async function runJob(job, input) {
               }
             }
 
-            images.push(selected.image);
+            if (scene.pointOut && !selected.image.cutout) {
+              try { selected.image.focus = await inspectFocus(selected.image.path, scene.pointOut.target, scene.narration); }
+              catch { job.warnings.push(`Scene ${i+1}: pointer location unverified; pointer omitted`); }
+            }
+            images[i] = selected.image;
 
           } else {
-            // Missing photo is not a fatal error.
-            images.push(null);
+            // Reference jobs retry below and fail if no verified real media remains.
+            images[i] = null;
 
             job.warnings.push(
-              `No usable CC0/CC BY image for scene ${i + 1}; graphic fallback used`
+              `No usable CC0/CC BY image for scene ${i + 1}; ${input.visualStyle==='reference-news'?'verified media retry required':'graphic fallback used'}`
             );
           }
         }
       } catch (e) {
-        // Continue with graphic fallback.
-        images.push(null);
+        // Collect the failure; the reference quality gate below requires media.
+        images[i] = null;
 
         job.warnings.push(
           `Scene ${i + 1} imagery unavailable: ${e.message}`
         );
       }
+      finally {
+        completedMedia++;
+        job.progress=43+Math.floor(Math.min(completedMedia,episode.scenes.length)/episode.scenes.length*12);
+      }
+    };
+    // Three mixed-media workers overlap provider/network waits; offline art is
+    // sequential because its later shots share the first generated asset.
+    await runSceneWorkers(episode.scenes.length,input.demo?1:mediaConcurrency,prepareSceneMedia);
+
+    // One bounded retry for missing real media. Same generic path for all topics;
+    // a rejected/missing visual must never silently become a text-only video.
+    const requiresMedia=i=>!['diagram','illustration'].includes(episode.scenes[i].visual);
+    if(!input.demo&&input.visualStyle==='reference-news'){
+      const missing=images.map((image,i)=>!image&&requiresMedia(i)?i:-1).filter(i=>i>=0);
+      if(missing.length){
+        visualPass++;
+        await checkpoint(job,'Retrying unverified visuals with alternate searches',55);
+        await runSceneWorkers(missing.length,mediaConcurrency,async n=>{
+          const i=missing[n],scene=episode.scenes[i];
+          const sceneSource=source.articles?.[scene.factIndex]||source;
+          const brief=await repairMediaBrief(scene,sceneSource,sceneSource.title||topic);
+          await writeFile(join(folder,`media-brief-repair-${i}.json`),JSON.stringify({before:{subjectEntity:scene.subjectEntity,visualQuery:scene.visualQuery,visualRole:scene.visualRole},repair:brief},null,2));
+          if(brief)Object.assign(scene,brief);
+          else{
+            const queries=mediaSearchQueries(scene,sceneSource,sceneSource.title||topic);
+            scene.visualQuery=queries.at(-1)||scene.subjectEntity||source.title;
+            scene.videoQuery=scene.visualQuery;
+          }
+          await prepareSceneMedia(i);
+        });
+      }
+      const failed=images.map((image,i)=>!image&&requiresMedia(i)?i:-1).filter(i=>i>=0);
+      if(failed.length)throw new QualityError('No verified licensed visual for scenes '+failed.map(i=>i+1).join(', '),[],failed);
+      if(strictMedia){
+        const issues=mediaBudgetIssues(images,strictMedia);
+        if(issues.length)throw new QualityError('Some shots have no verified clip or fallback photo',issues);
+      }
     }
 
+
+    await stockPrefetch;
+    await writeFile(join(folder,'stock-performance.json'),JSON.stringify(stockSession.metrics,null,2));
     await writeFile(
       join(folder, 'episode.json'),
       JSON.stringify(
@@ -1201,7 +1505,7 @@ async function runJob(job, input) {
       )
     ) {
       for (
-        const effect of requiredSounds(episode)
+        const effect of requiredSounds(episode,{visualStyle:input.visualStyle})
       ) {
         try {
           const intent = episode.scenes.find(
@@ -1214,9 +1518,14 @@ async function runJob(job, input) {
               assets,
               `sfx_${effect}.mp3`
             ),
-            intent
+            intent,
+            {strict:input.visualStyle==='reference-news'}
           );
 
+          const scene=episode.scenes.find(s=>s.soundCue===effect&&s.sfxReason?.length>=12);
+          if(item&&input.visualStyle==='reference-news'&&(!scene||!await auditSoundCue(item.file,scene))){
+            job.warnings.push(`Freesound ${effect}: relevance review failed; cue omitted`);continue;
+          }
           if (item) {
             sounds[effect] = item.file;
             soundCredits.push(item);
@@ -1239,15 +1548,18 @@ async function runJob(job, input) {
         {
           source: job.sources,
           images: credits,
+          videos: credits.filter(item => item.mediaType === 'video'),
           soundEffects: soundCredits,
 
           narrator: input.demo
             ? null
             : {
-                provider: 'Cartesia',
+                provider: input.voiceProvider==='fish'?'Fish Audio':input.voiceProvider==='heygen'?'HeyGen':'Cartesia',
+                ...(input.voiceProvider==='fish'?{model:FISH_FREE_MODEL,voiceId:fishVoiceId(input.language)}:{}),
+                ...(input.voiceProvider==='heygen'?{model:heygenModel(),voiceId:input.providerKeys[input.language==='hi'?'HEYGEN_VOICE_HI_ID':'HEYGEN_VOICE_EN_ID']||process.env[input.language==='hi'?'HEYGEN_VOICE_HI_ID':'HEYGEN_VOICE_EN_ID']||DEFAULT_HEYGEN_VOICE,processing:heygenPerformance({},input.voiceStyle,input.language)}:{}),
                 voiceAccent: input.voiceAccent,
                 voiceName:
-                  resolveVoiceProfile(
+                  input.voiceProvider==='fish'?'Fish Audio '+(input.language==='en'?'English':'Hindi'):input.voiceProvider==='heygen'?(heygenSpeechMode()==='catalog'?'HeyGen catalog voice':'HeyGen Yash (Turbo Free)'):resolveVoiceProfile(
                     input.voiceAccent
                   ).name,
                 profile: 'male',
@@ -1279,6 +1591,8 @@ async function runJob(job, input) {
       narration.voice,
       {
         demo: input.demo,
+        visualStyle: input.demo ? 'paper' : input.visualStyle,
+        mediaFit: input.mediaFit,
         backgroundPalette:
           input.backgroundPalette,
 
@@ -1293,13 +1607,30 @@ async function runJob(job, input) {
           : clamp(
               Number(
                 process.env.RENDER_FPS
-              ) || 30,
+              ) || 24,
               8,
               60
             )
       }
     );
 
+    if (input.visualStyle === 'reference-news' && !input.demo && plan.scenes.some(scene => scene.reference_media?.pointer)) {
+      const pointerAssets = join(assets, 'svg-pointers');
+      await preparePointerAssets(pointerAssets);
+      plan.meta.pointer_assets = pointerAssets;
+    }
+    if (!input.demo) {
+      if(input.visualStyle==='reference-news'){
+        plan.meta.size=[1080,1440];plan.meta.output_size=[1080,1920];plan.meta.headline_height=62;plan.meta.template='reference-3x4';
+      }
+      plan.meta.headline_image = await prepareHeadlineAssets(episode.headlineText, episode.headlineHighlight, join(assets,'headline'),{compact:input.visualStyle==='reference-news'});
+      await prepareExplainers(plan,assets);
+      if(input.visualStyle==='reference-news')await prepareOverlayTextAssets(plan,join(assets,'shaped-labels'));
+    }
+    moveCreditsToDescription(plan);
+    if(preparedLogo){plan.meta.logo_image=preparedLogo;plan.meta.logo_opacity=.5;}
+    if(input.visualStyle==='reference-news'&&input.voiceStyle==='energetic'&&input.voiceAccent==='hi-IN-anuj'&&input.voiceProvider==='cartesia')plan.meta.voice_pitch_semitones=2;
+    job.size=plan.meta.output_size||plan.meta.size||[1080,1920];
     await writeFile(
       join(folder, 'plan.json'),
       JSON.stringify(plan, null, 2)
@@ -1385,6 +1716,35 @@ async function runJob(job, input) {
       );
     }
 
+    if(!input.demo&&input.visualStyle==='reference-news'){
+      await checkpoint(job,'Verifying subjects, framing and titles in the exported video',98);
+      if(['hi','en'].includes(input.language)){
+        const masteredVoice=join(assets,'exported-narration.wav');
+        await processTool('ffmpeg',['-v','error','-y','-i',output,'-vn','-ac','1','-ar','24000',masteredVoice]);
+        const review=await auditHindiNarration(masteredVoice,episode,{requireNatural:true});
+        await writeFile(join(folder,'final-audio-review.json'),JSON.stringify(review,null,2));
+      }
+      const finalReview=await reviewRenderedVideo(plan,episode,{run:processTool,assets});
+      await writeFile(join(folder,'quality-report.json'),JSON.stringify({
+        approved:finalReview.approved,mediaBudget:strictMedia,editorial:'editorial-review.json',audio:'audio-review.json',
+        visuals:images.map((image,index)=>({index,review:image?.visualReview||null,fit:image?.mediaFit,subjectFocus:image?.subjectFocus})),finalReview
+      },null,2));
+      if(!finalReview.approved)throw new QualityError('Final video quality review did not pass: '+finalReview.issues.join('; ').slice(0,700),finalReview.issues,finalReview.indices);
+    }
+
+    // Upload title is generated from the finished episode, independently of
+    // the fixed on-video headline, which keeps its existing design.
+    job.youtubeTitle = episode.title;
+    if (!input.demo) {
+      try {
+        const title = await gemini(`Write ONE concise, engaging YouTube Shorts upload title in ${input.language === 'hi' ? 'natural Hindi (Devanagari, a little English is fine)' : 'English'}. Base it ONLY on the actual finished narration below. Curiosity is welcome, but no invented facts, unsupported numbers or fake danger. At most 90 characters, exactly one final emoji from 😲 🤔 🔍 ⚡, no hashtags. Return JSON {"title":"..."}. Narration: ${JSON.stringify(episode.scenes.map(s=>s.narration))}`);
+        if(input.language==='en'&&/[\u0900-\u097f]/u.test(title.title||''))throw Error('Upload title must be English');
+        if (typeof title.title === 'string' && title.title.trim()) job.youtubeTitle = normalizeHookTitle(title.title);
+      } catch { job.warnings.push('Upload-title generation unavailable; episode title provided'); }
+      job.youtubeTitle = normalizeHookTitle(job.youtubeTitle);
+    }
+    await writeFile(join(folder, 'youtube-title.txt'), job.youtubeTitle + '\n');
+    await writeFile(join(folder,'upload-description.txt'),uploadDescription([...credits,...soundCredits],job.sources));
     job.video = true;
     job.duration = plan.meta.duration;
     job.status = 'complete';
@@ -1476,18 +1836,18 @@ function sendJSON(res, status, value) {
 }
 
 async function jsonBody(req) {
-  let body = '';
+  const chunks=[];let size=0;
 
   for await (const part of req) {
-    body += part;
+    chunks.push(part);size+=part.length;
 
-    if (body.length > 16_000) {
+    if (size > 1_450_000) {
       throw Error('Request too large');
     }
   }
 
   try {
-    return JSON.parse(body);
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
     throw Error(
       'Expected JSON request body'
@@ -1741,7 +2101,7 @@ export function makeServer() {
       );
 
       const jobRoute =
-        /^\/api\/jobs\/([a-f\d-]{36})(?:\/(video|download|credits|episode|plan|contact))?$/.exec(
+        /^\/api\/jobs\/([a-f\d-]{36})(?:\/(video|download|credits|episode|plan|contact|title|description))?$/.exec(
           url.pathname
         );
 
@@ -1762,10 +2122,12 @@ export function makeServer() {
 
               providers: {
                 gemini:
-                  !!process.env.GEMINI_API_KEY,
+                  !!(process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_2 || process.env.GEMINI_API_KEY_3),
 
                 cartesia:
                   !!process.env.CARTESIA_API_KEY,
+                heygen:!!process.env.HEYGEN_API_KEY,
+                fish:!!process.env.FISH_API_KEY,
 
                 freesound:
                   !!process.env.FREESOUND_API_KEY,
@@ -1844,7 +2206,8 @@ export function makeServer() {
             warnings: [],
             sources: [],
             video: false,
-            demo: input.demo
+            demo: input.demo,
+            size: [1080,1920]
           };
 
           jobs.set(id, job);
@@ -1950,6 +2313,15 @@ export function makeServer() {
               safeJob(job)
             );
 
+          } else if (action === 'description') {
+            if(job.status!=='complete'){sendJSON(res,404,{error:'Description not ready'});return;}
+            const description=await readFile(join(JOBS,id,'upload-description.txt'));
+            res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8','Content-Disposition':'attachment; filename="upload-description.txt"'});res.end(description);
+          } else if (action === 'title') {
+            if (job.status !== 'complete') { sendJSON(res, 404, {error:'Upload title not ready'}); return; }
+            const title = await readFile(join(JOBS,id,'youtube-title.txt'));
+            res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Content-Disposition':'attachment; filename="youtube-title.txt"'});
+            res.end(title);
           } else if (
             action === 'credits'
           ) {

@@ -8,6 +8,7 @@ process.env.DEMO_FPS = process.env.DEMO_FPS || '5';
 process.env.DEMO_SCENE_SECONDS = process.env.DEMO_SCENE_SECONDS || '.8';
 process.env.JOBS_DIR = await mkdtemp(join(tmpdir(), 'paperfacts-smoke-'));
 const { makeServer } = await import('../server.mjs');
+const { validateAdvancedPlan } = await import('../lib/director.mjs');
 const server = makeServer();
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -34,7 +35,8 @@ try {
   const planResponse = await fetch(`${base}/api/jobs/${job.id}/plan`);
   const plan = await planResponse.json();
   if (planResponse.status !== 200 || !Array.isArray(plan.scenes) || plan.scenes.length !== 4 ||
-      !plan.scenes.some(s => s.water)) throw Error('Advanced JSON animation plan missing');
+      validateAdvancedPlan(plan).length || !plan.scenes.every(s=>s.elements?.length))
+    throw Error('Complete valid animation plan missing');
   const storyboardResponse = await fetch(`${base}/api/jobs/${job.id}/episode`);
   if (storyboardResponse.status !== 200 || !(await storyboardResponse.json()).scenes) throw Error('Storyboard download unavailable');
   if (result.contactUrl) {

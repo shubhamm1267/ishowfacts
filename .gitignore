@@ -16,5 +16,7 @@ __pycache__/
 
 samples/*.mp4
 samples/media/
+samples/
+web/.angular/
 
 *.zip

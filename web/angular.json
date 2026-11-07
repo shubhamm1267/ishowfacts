@@ -29,5 +29,8 @@
         }
       }
     }
+  },
+  "cli": {
+    "analytics": "6be2da21-adf7-479e-b281-10483b0df0f8"
   }
 }
