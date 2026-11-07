@@ -19,8 +19,11 @@ test('deployment origin normalization tolerates copied quotes and trailing slash
  try{
   const good=await fetch(base+'/api/health',{headers:{Origin:'https://facts-example.netlify.app'}});
   assert.equal(good.status,200);assert.equal(good.headers.get('access-control-allow-origin'),'https://facts-example.netlify.app');
+  assert.equal((await good.json()).deployment.frontendOrigin,'https://facts-example.netlify.app');
   const bad=await fetch(base+'/api/health',{headers:{Origin:'https://facts-example.netlify.app.attacker.example'}});
   assert.equal(bad.status,403);assert.equal(bad.headers.get('access-control-allow-origin'),null);
+  const detail=await bad.json();assert.equal(detail.configuredFrontendOrigin,'https://facts-example.netlify.app');
+  assert.equal(detail.receivedOrigin,'https://facts-example.netlify.app.attacker.example');
  }finally{await new Promise(ok=>server.close(ok));}
 });
 

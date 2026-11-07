@@ -2069,7 +2069,10 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
           res,
           403,
           {
-            error: 'Origin not allowed'
+            error: 'Origin not allowed',
+            code: 'ORIGIN_NOT_ALLOWED',
+            receivedOrigin: origin,
+            configuredFrontendOrigin: normalizeFrontendOrigin(frontendOrigin)
           }
         );
 
@@ -2125,6 +2128,12 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
             200,
             {
               ok: true,
+
+              deployment: {
+                frontendOrigin: normalizeFrontendOrigin(frontendOrigin),
+                revision: /^[a-f0-9]{40}$/i.test(process.env.RENDER_GIT_COMMIT||'')
+                  ? process.env.RENDER_GIT_COMMIT : null
+              },
 
               demo:
                 process.env.DEMO_MODE === '1',
