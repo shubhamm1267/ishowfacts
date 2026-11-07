@@ -72,7 +72,19 @@ export function createStockMediaCache({directory,maxBytes=256*1024*1024,ttlMs=20
 }
 
 export function createStockSession({cache=null}={}){
- return {cache,requests:new Map(),metrics:{metadataRequests:0,metadataHits:0,cacheHits:0}};
+ return {cache,requests:new Map(),blockedSearches:new Map(),metrics:{metadataRequests:0,metadataHits:0,cacheHits:0,searches:[]}};
+}
+// An authentication/access denial is not query-specific. Avoid repeating it
+// for every scene in this job; a new job gets a fresh chance after configuration changes.
+function providerSearch(session,identity,key,operation){
+ if(session.blockedSearches.has(identity))return Promise.reject(session.blockedSearches.get(identity));
+ return stockLookup(session,key,async()=>{
+  if(session.blockedSearches.has(identity))throw session.blockedSearches.get(identity);
+  try{return await operation();}catch(error){
+   if([401,403].includes(error.status))session.blockedSearches.set(identity,error);
+   throw error;
+  }
+ });
 }
 export function stockLookup(session,key,operation){
  if(session.requests.has(key)){session.metrics.metadataHits++;return session.requests.get(key);}
@@ -90,12 +102,12 @@ function vecteezySearch(query,session){
  if(!/^\d+$/.test(account)||!key)return Promise.resolve(null);
  const url=new URL(`https://api.vecteezy.com/v2/${account}/resources`);
  Object.entries({term:normalizedQuery(query),content_type:'video',license_type:'commercial',ai_generated:'false',per_page:'12'}).forEach(([k,v])=>url.searchParams.set(k,v));
- return stockLookup(session,scope()+':'+url,async()=>(await request(url,{Authorization:`Bearer ${key}`})).json());
+ return providerSearch(session,'vecteezy:'+scope(),scope()+':'+url,async()=>(await request(url,{Authorization:`Bearer ${key}`})).json());
 }
 export async function prefetchStockVideo(query,{session}){
  try{
   const result=await vecteezySearch(query,session);
-  if(!result?.resources?.length){const url=mixkitSearchURL(query);await stockLookup(session,url,()=>textPage(url));}
+  if(!result?.resources?.length){const url=mixkitSearchURL(query);await providerSearch(session,'mixkit',url,()=>textPage(url));}
  }catch{/* Best effort: a failed lookup is evicted, so normal acquisition retries. */}
 }
 
@@ -116,7 +128,12 @@ async function request(url, headers = {}, timeoutMs = 15_000, method = 'GET') {
       headers = {}; // Never forward API credentials to a CDN or redirect.
       continue;
     }
-    if (!response.ok) throw Error(`Stock provider HTTP ${response.status}`);
+    if (!response.ok) {
+      await response.body?.cancel();
+      const error=Error(`${current.hostname}: Stock provider HTTP ${response.status}`);
+      error.status=response.status;
+      throw error;
+    }
     return response;
   }
   throw Error('Too many stock provider redirects');
@@ -186,12 +203,21 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
   // frame inspection remains mandatory; a title is not proof of relevance.
   const relevance=title=>subjectWords.filter(w=>words(title).some(t=>forms(w).some(f=>forms(t).includes(f)))).length;
   const candidates = [];
-  let failure;
+  const failures=[];
+  const searches=[];
+  const recordFailure=(provider,error)=>{checkGenerationCancelled();failures.push(`${provider}: ${error.message}`);};
+  const searchRow=provider=>{
+    const row={provider,query:normalizedQuery(query),status:'searching',results:0,candidates:0,reviewed:0,rejected:0};
+    session.metrics.searches.push(row);searches.push(row);return row;
+  };
+  let currentSearch;
   if (/^\d+$/.test(account) && key) {
+    currentSearch=searchRow('Vecteezy');
     try {
       const base = `https://api.vecteezy.com/v2/${account}`;
       const headers = { Authorization: `Bearer ${key}` };
       const data = await vecteezySearch(query,session);
+      currentSearch.results=(data.resources||[]).length;currentSearch.status='searched';
       const ranked=(data.resources||[]).map((item,index)=>({item,index,score:relevance(item.title)}))
         .sort((a,b)=>b.score-a.score||a.index-b.index);
       for (const {item} of ranked) {
@@ -228,39 +254,45 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
             attributionUrl: ticket?.required_attribution_url || source };
         }});
       }
-    } catch (e) { failure = e; }
+    } catch (e) {currentSearch.status='unavailable';recordFailure('Vecteezy',e);}
   }
   async function reviewCandidates() {
     // Bound expensive downloads/reviews before falling back to a checked photo.
     // This is per provider; Mixkit remains available after Vecteezy candidates.
     const limit=Math.min(5,Math.max(1,Number(process.env.STOCK_VIDEO_CANDIDATES)||2));
     let attempts=0;
+    currentSearch.candidates=candidates.length;
     for (const {id,acquire} of candidates.splice(0)) {
       // Another scene may have reserved this candidate while we reviewed the
       // previous one. Skipping its ID must not consume a download/review slot.
       if(used.has(id))continue;
       if(attempts++>=limit)break;
       try {
-        const item=await acquire();if(!item)continue;
+        const item=await acquire();if(!item){currentSearch.rejected++;continue;}
         used.add(item.id);
+        currentSearch.reviewed++;
         const prepared=await inspect(item);
         if(prepared){
+         currentSearch.status='selected';
          try{await session.cache?.put(cacheKey(item.id),item.file);}catch{/* Optional cache cannot fail a verified shot. */}
          return {...item,...prepared};
         }
-      }catch(e){failure=e;}
+        currentSearch.rejected++;
+      }catch(e){recordFailure(currentSearch.provider,e);}
     }
     return null;
   }
-  const fromVecteezy=await reviewCandidates();
+  const fromVecteezy=currentSearch?await reviewCandidates():null;
   if(fromVecteezy)return fromVecteezy;
   candidates.length=0; // Remaining Vecteezy candidates must not consume Mixkit's budget.
   // Only query Mixkit when Vecteezy has no usable result.
+  currentSearch=searchRow('Mixkit');
   try {
     const searchURL=mixkitSearchURL(query);
-    const html = await stockLookup(session,searchURL,()=>textPage(searchURL));
+    const html = await providerSearch(session,'mixkit',searchURL,()=>textPage(searchURL));
     const links = [...new Set([...html.matchAll(/href="(\/free-stock-video\/[a-z0-9-]+-\d+\/)"/g)].map(m => m[1]))]
       .sort((a,b)=>relevance(b)-relevance(a)).slice(0, 3);
+    currentSearch.results=links.length;currentSearch.status='searched';
     for (const link of links) {
       if (used.has(link)) continue;
       candidates.push({id:link,acquire:async () => {
@@ -273,21 +305,23 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
           license: 'Mixkit Stock Video Free License', licenseUrl: 'https://mixkit.co/license/#videoFree', requiresAttribution: false };
       }});
     }
-  } catch (e) { failure ||= e; }
+  } catch (e) {currentSearch.status='unavailable';recordFailure('Mixkit',e);}
   const fromMixkit=await reviewCandidates();
   if(fromMixkit)return fromMixkit;
   // Additional free licensed providers share the same download and visual gates.
   for(const provider of ['pexels','coverr']){
    const apiKey=providerValue(provider==='pexels'?'PEXELS_API_KEY':'COVERR_API_KEY');
    if(!apiKey)continue;
+   currentSearch=searchRow(provider==='pexels'?'Pexels':'Coverr');
    try{
     const url=new URL(provider==='pexels'?'https://api.pexels.com/v1/videos/search':'https://api.coverr.co/videos');
     url.searchParams.set('query',normalizedQuery(query));
     if(provider==='pexels'){url.searchParams.set('per_page','12');url.searchParams.set('size','medium');}
     else{url.searchParams.set('page_size','12');url.searchParams.set('urls','true');url.searchParams.set('filter','is_ai_generated:false');}
     const headers=provider==='pexels'?{Authorization:apiKey}:{'x-api-key':apiKey};
-    const data=await stockLookup(session,provider+':'+digest(apiKey)+':'+url,async()=>(await request(url,headers)).json());
+    const data=await providerSearch(session,provider+':'+digest(apiKey),provider+':'+digest(apiKey)+':'+url,async()=>(await request(url,headers)).json());
     const rows=(provider==='pexels'?data.videos:data.hits)||[];
+    currentSearch.results=rows.length;currentSearch.status='searched';
     for(const row of rows){
      const id=provider+':'+row.id;
      if(used.has(id)||row.is_ai_generated===true||row.is_premium===true||row.sponsored===true)continue;
@@ -311,15 +345,17 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
      if(provider==='coverr')await request('https://api.coverr.co/videos/'+encodeURIComponent(selected.downloadTrackingId)+'/stats/downloads',{...headers},15000,'PATCH');
      return selected;
     }
-   }catch(e){failure ||= e;}
+   }catch(e){currentSearch.status='unavailable';recordFailure(currentSearch.provider,e);}
   }
   // The same Commons source used for photos also hosts original licensed video.
   // Keep the same HD, licence, diversity and caller inspection requirements.
+  currentSearch=searchRow('Wikimedia Commons');
   try{
    const result=await commonsVideo(query,dest,{used,inspect,subject,session});
+   currentSearch.status=result?'selected':'no verified match';
    if(result)return result;
-  }catch(e){failure ||= e;}
-  if (failure) throw failure;
+  }catch(e){currentSearch.status='unavailable';recordFailure('Wikimedia Commons',e);}
+  if(failures.length)throw Error('No verified clip. Checked '+searches.map(row=>`${row.provider} (${row.status}, ${row.results} results, ${row.reviewed} reviewed)`).join(', ')+'. Errors: '+[...new Set(failures)].join('; '));
   return null;
 }
 

@@ -312,6 +312,29 @@ test('concurrent Gemini calls occupy three distinct projects and hold slots unti
 });
 
 
+test('access-denied searches skip repeated calls within a job while every fallback is still checked',async()=>{
+ const saved=globalThis.fetch,session=createStockSession(),calls=new Map();
+ const keys={VECTEEZY_ACCOUNT_ID:'1',VECTEEZY_API_KEY:'vec',PEXELS_API_KEY:'pex',COVERR_API_KEY:'cov'};
+ try{
+  globalThis.fetch=async address=>{
+   const host=new URL(address).hostname;calls.set(host,(calls.get(host)||0)+1);
+   if(host==='commons.wikimedia.org')return Response.json({query:{pages:{}}});
+   return new Response('',{status:403});
+  };
+  for(const query of ['popcorn kernels','popcorn cooking']){
+   await assert.rejects(runWithProviders(keys,()=>stockVideo(query,'unused.mp4',{session,inspect:async()=>assert.fail('no download exists')})),error=>{
+    for(const provider of ['Vecteezy','Mixkit','Pexels','Coverr','Wikimedia Commons'])assert.ok(error.message.includes(provider));
+    assert.match(error.message,/api.pexels.com: Stock provider HTTP 403/);return true;
+   });
+  }
+  for(const host of ['api.vecteezy.com','mixkit.co','api.pexels.com','api.coverr.co'])assert.equal(calls.get(host),1,host);
+  assert.equal(calls.get('commons.wikimedia.org'),2);
+  assert.equal(session.metrics.searches.length,10);
+  assert.ok(session.metrics.searches.every(row=>typeof row.query==='string'));
+  assert.doesNotMatch(JSON.stringify(session.metrics),/Authorization|Bearer|api_key/);
+ }finally{globalThis.fetch=saved;}
+});
+
 test('Pexels fallback retains mandatory inspection and creator credit',async()=>{
  const saved=globalThis.fetch,folder=await mkdtemp(join(tmpdir(),'pexels-')),bytes=Buffer.alloc(2000);bytes.write('ftyp',4);let inspected=0;
  try{

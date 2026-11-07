@@ -1161,7 +1161,12 @@ async function runJob(job, input) {
             }
           } catch (e) {
             job.warnings.push(`Scene ${i + 1}: stock video unavailable (${e.message}); trying a verified photo`);
-          } finally { videoReservations--; }
+          } finally {
+            videoReservations--;
+            // Keep provider/query diagnostics even when acquisition or a later
+            // stage fails, without recording keys or signed download links.
+            await writeFile(join(folder,`stock-search-${i}.json`),JSON.stringify(stockSession.metrics,null,2)).catch(()=>{});
+          }
         }
         // Footage first; a verified photo is the allowed fallback.
         if (
