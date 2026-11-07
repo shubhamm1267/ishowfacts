@@ -5,10 +5,18 @@ import unittest
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageChops
 from media_framing import crop_media
-from paper_doc import Reel
+from paper_doc import Reel, bounded_ffmpeg
 
 
 class MediaFramingTests(unittest.TestCase):
+    def test_ffmpeg_thread_limits_preserve_arguments_and_do_not_change_other_tools(self):
+        command = ["ffmpeg", "-i", "clip.mp4", "out.mp4"]
+        bounded = bounded_ffmpeg((command,))[0]
+        self.assertEqual(bounded[:7], ["ffmpeg", "-threads", "2", "-filter_threads", "1", "-filter_complex_threads", "1"])
+        self.assertEqual(bounded[7:], command[1:])
+        self.assertEqual(command, ["ffmpeg", "-i", "clip.mp4", "out.mp4"])
+        self.assertEqual(bounded_ffmpeg((["ffprobe", "clip.mp4"],)), (["ffprobe", "clip.mp4"],))
+
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)

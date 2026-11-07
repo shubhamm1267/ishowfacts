@@ -5,6 +5,7 @@ import { HttpClient } from '@angular/common/http';
 import { timeout } from 'rxjs';
 
 interface Job {
+  instanceId?: string;
   id: string; status: 'running' | 'failed' | 'complete' | 'cancelled'; stage: string; progress: number;
   cancelRequested?: boolean;
   title: string; topic: string; category?: string; error?: string; warnings: string[]; demo?: boolean;
@@ -181,6 +182,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private pollTimer?: ReturnType<typeof setInterval>;
   private polling = false;
   private disconnectCount = 0;
+  private missingJobCount = 0;
   cancelling = false;
 
   health: Health | null = null;
@@ -404,6 +406,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
     this.working = true;
     this.disconnectCount = 0;
+    this.missingJobCount = 0;
 
     this.pollTimer = setInterval(
       () => this.refresh(id),
@@ -435,6 +438,7 @@ export class AppComponent implements OnInit, OnDestroy {
       next: job => {
         this.polling = false;
         this.disconnectCount = 0;
+        this.missingJobCount = 0;
 
         this.job = job;
         this.error = '';
@@ -456,11 +460,22 @@ export class AppComponent implements OnInit, OnDestroy {
         this.polling = false;
 
         if (response.status === 404) {
+          const restarted=!!this.job?.instanceId && !!response.error?.instanceId &&
+            this.job.instanceId !== response.error.instanceId;
+          // Deploy routing can briefly send polling to a different instance.
+          // Give the original job time to answer before declaring it lost.
+          if(++this.missingJobCount < 5){
+            this.error='Reconnecting to your video generation...';
+            return;
+          }
           this.working = false;
           this.stopPolling();
 
-          this.error =
-            'Job not found. It may have expired or the service restarted.';
+          this.error = restarted
+            ? 'The backend instance changed and this job is unavailable. Check Render Events for a restart or deploy, then generate again.'
+            : this.job?.status === 'running'
+              ? 'The running job is no longer available on the backend. Check Render Events for a restart or memory error, then generate again.'
+              : 'This job is unavailable. Finished jobs are deleted after 30 minutes.';
 
           return;
         }

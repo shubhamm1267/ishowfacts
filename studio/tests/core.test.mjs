@@ -100,6 +100,18 @@ test('deployment origin normalization tolerates copied quotes and trailing slash
  }finally{await new Promise(ok=>server.close(ok));}
 });
 
+test('missing job responses identify the backend instance and cannot be cached',async()=>{
+ const server=makeServer();await new Promise(ok=>server.listen(0,'127.0.0.1',ok));
+ const base='http://127.0.0.1:'+server.address().port;
+ try{
+  const health=await(await fetch(base+'/api/health')).json();
+  assert.match(health.instanceId,/^[a-f0-9-]{36}$/);
+  const response=await fetch(base+'/api/jobs/'+randomUUID());
+  assert.equal(response.status,404);assert.equal(response.headers.get('cache-control'),'no-store');
+  const missing=await response.json();assert.equal(missing.code,'JOB_NOT_FOUND');assert.equal(missing.instanceId,health.instanceId);
+ }finally{await new Promise(ok=>server.close(ok));}
+});
+
 test('random fact mode is explicit and unknown modes retain topic research',()=>{
  const providerKeys={GEMINI_API_KEY:'test',CARTESIA_API_KEY:'test'};
  assert.equal(validateInput({providerKeys,factMode:'random'}).factMode,'random');

@@ -39,15 +39,26 @@ PACK_SOUNDS = PACK / "sounds"
 
 
 def run_hidden(*args, **kwargs):
+    args = bounded_ffmpeg(args)
     if os.name == "nt":
         kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
     return subprocess.run(*args, **kwargs)
 
 
 def popen_hidden(*args, **kwargs):
+    args = bounded_ffmpeg(args)
     if os.name == "nt":
         kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
     return subprocess.Popen(*args, **kwargs)
+
+
+def bounded_ffmpeg(args):
+    """Bound decoder/filter pools independently of the host CPU count."""
+    if args and isinstance(args[0], (list, tuple)) and Path(args[0][0]).name.lower() in ("ffmpeg", "ffmpeg.exe"):
+        command = list(args[0])
+        command[1:1] = ["-threads", "2", "-filter_threads", "1", "-filter_complex_threads", "1"]
+        return (command, *args[1:])
+    return args
 
 
 def find_ast_root():
@@ -2353,6 +2364,7 @@ class Reel:
         enc = popen_hidden(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                                 "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
                                 *canvas_filter, "-c:v", "libx264", "-preset", os.getenv("PAPERDOC_PRESET", "veryfast"),
+                                "-threads", "2",
                                 "-crf", os.getenv("PAPERDOC_CRF", "17"), "-pix_fmt", "yuv420p",
                                 str(silent)], stdin=subprocess.PIPE)
         n = int(self.dur * FPS)

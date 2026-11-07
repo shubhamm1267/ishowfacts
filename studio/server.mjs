@@ -95,6 +95,7 @@ let activeJob = null;
 const jobControllers=new Map();
 
 const jobs = new Map();
+const instanceId=randomUUID();
 
 export const VIDEO_TTL_MS = 30 * 60 * 1000;
 
@@ -199,6 +200,7 @@ function safeJob(job) {
 
   return {
     id,
+    instanceId,
     status,
     cancelRequested:!!job.cancelRequested,
     youtubeTitle: job.youtubeTitle || null,
@@ -418,6 +420,10 @@ export function validateLogoUpload(value){
 // Executes Python and FFmpeg with a configurable timeout.
 const limitProcess=createProcessLimiter(3);
 export function processTool(command, args, onText) {
+  // FFmpeg otherwise sizes its thread pools from the host CPU count, which
+  // can greatly exceed the memory/CPU allocation of a small Render container.
+  if(/(?:^|[\\/])ffmpeg(?:\.exe)?$/i.test(command))
+    args=['-threads','2','-filter_threads','1','-filter_complex_threads','1',...args];
   return limitProcess(()=>new Promise((resolveJob, rejectJob) => {
     checkGenerationCancelled();
     const signal=generationSignal();
@@ -2150,6 +2156,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
             200,
             {
               ok: true,
+              instanceId,
 
               deployment: {
                 frontendOrigin: normalizeFrontendOrigin(frontendOrigin),
@@ -2326,7 +2333,9 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
                 res,
                 404,
                 {
-                  error: 'Job not found'
+                  error: 'Job not found',
+                  code: 'JOB_NOT_FOUND',
+                  instanceId
                 }
               );
 
