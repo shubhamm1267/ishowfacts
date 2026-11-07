@@ -4,7 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {join} from 'node:path';
 import {Readable,Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
-import { providerValue,licenseInfo,mediaTitleMismatch } from './core.mjs';
+import { providerValue,licenseInfo,mediaTitleMismatch,generationFetch,checkGenerationCancelled } from './core.mjs';
 
 const MAX = () => Math.min(120, Math.max(5, Number(process.env.STOCK_VIDEO_MAX_MB) || 80)) * 1024 * 1024;
 const allowed = host => ['vecteezy.com', 'mixkit.co', 'pexels.com', 'coverr.co'].some(d => host === d || host.endsWith('.' + d))||['commons.wikimedia.org','upload.wikimedia.org'].includes(host);
@@ -110,7 +110,7 @@ async function request(url, headers = {}, timeoutMs = 15_000, method = 'GET') {
   for (let n = 0; n < 5; n++) {
     if (current.protocol !== 'https:' || !allowed(current.hostname) || current.username || current.password)
       throw Error('Stock media URL outside approved providers');
-    const response = await fetch(current, { method, headers, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+    const response = await generationFetch(current, { method, headers, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     if ([301,302,303,307,308].includes(response.status)) {
       current = new URL(response.headers.get('location'), current);
       headers = {}; // Never forward API credentials to a CDN or redirect.
@@ -172,6 +172,7 @@ export function syntheticStock(title=''){
 }
 
 export async function stockVideo(query, dest, { used = new Set(), inspect,subject='',seconds=7,session=createStockSession() } = {}) {
+  checkGenerationCancelled();
   const account = providerValue('VECTEEZY_ACCOUNT_ID'), key = providerValue('VECTEEZY_API_KEY');
   const cacheKey=id=>scope()+':'+id;
   async function restore(id){

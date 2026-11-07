@@ -60,6 +60,12 @@ Node, Python and FFmpeg; deploy it as a Docker web service, not a Netlify Functi
    not the Angular page or a 403. Then open the site itself.
 3. Choose Fish Audio, Hindi or English, a 25/30-second target, upload the logo
    and click **Generate Video**. Verify preview, MP4 download and source credits.
+   Use **Cancel Generation** in the progress panel to stop a running job.
+   Refreshing the page reconnects to the job; it does not cancel it. Cancellation
+   aborts in-flight provider requests and stops renderer process trees. The slot
+   becomes available after shutdown finishes. Requests already processed by an
+   external provider cannot be undone. Cancelled job files use the same
+   30-minute expiry as failed/completed jobs.
 4. If the free backend has slept, first open the direct Render `/api/health`
    URL and wait for it to wake, then refresh the Netlify site.
 5. If logs show `Origin not allowed`, correct FRONTEND_ORIGIN. If Netlify build

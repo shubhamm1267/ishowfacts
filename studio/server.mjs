@@ -50,7 +50,7 @@ import {
   mediaSearchQueries,
   repairMediaBrief,
   resolveVoiceProfile,
-  runWithProviders
+  runWithProviders, generationSignal, checkGenerationCancelled
 } from './lib/core.mjs';
 
 import {
@@ -92,6 +92,7 @@ export function normalizeFrontendOrigin(value) {
 // Only one video is generated at a time.
 let busy = false;
 let activeJob = null;
+const jobControllers=new Map();
 
 const jobs = new Map();
 
@@ -199,6 +200,7 @@ function safeJob(job) {
   return {
     id,
     status,
+    cancelRequested:!!job.cancelRequested,
     youtubeTitle: job.youtubeTitle || null,
     category:job.category||null,
     size: job.size || [1080,1920],
@@ -240,6 +242,7 @@ function safeJob(job) {
 }
 
 async function checkpoint(job, stage, progress) {
+  if(job.status==='running')checkGenerationCancelled();
   recordStage(job,stage);
   job.stage = stage;
   job.progress = progress;
@@ -414,8 +417,10 @@ export function validateLogoUpload(value){
 
 // Executes Python and FFmpeg with a configurable timeout.
 const limitProcess=createProcessLimiter(3);
-function processTool(command, args, onText) {
+export function processTool(command, args, onText) {
   return limitProcess(()=>new Promise((resolveJob, rejectJob) => {
+    checkGenerationCancelled();
+    const signal=generationSignal();
     const configuredMinutes = Number(
       process.env.RENDER_PROCESS_TIMEOUT_MINUTES || 45
     );
@@ -447,6 +452,7 @@ function processTool(command, args, onText) {
 
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort',cancelProcess);
 
       if (error) {
         rejectJob(error);
@@ -454,6 +460,14 @@ function processTool(command, args, onText) {
         resolveJob(result);
       }
     };
+
+    const cancelProcess=()=>{
+      if(process.platform==='win32'&&child.pid){
+        spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'}).on('error',()=>{});
+      }else if(child.pid){try{process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL');}}
+    };
+    signal?.addEventListener('abort',cancelProcess,{once:true});
+    if(signal?.aborted)cancelProcess();
 
     timer = setTimeout(() => {
       timedOut = true;
@@ -497,6 +511,7 @@ function processTool(command, args, onText) {
     });
 
     child.on('close', code => {
+      if(signal?.aborted){finish(signal.reason||Error('Generation cancelled'));return;}
       if (timedOut) {
         finish(
           Error(
@@ -1756,6 +1771,7 @@ async function runJob(job, input) {
     await writeFile(join(folder,'upload-description.txt'),uploadDescription([...credits,...soundCredits],job.sources));
     job.video = true;
     job.duration = plan.meta.duration;
+    checkGenerationCancelled();
     job.status = 'complete';
 
     await checkpoint(
@@ -1770,15 +1786,15 @@ async function runJob(job, input) {
       e
     );
 
-    job.error =
-      e.message || 'Video generation failed';
-
-    job.status = 'failed';
+    const cancelled=jobControllers.get(job.id)?.signal.aborted;
+    job.error = cancelled ? null : e.message || 'Video generation failed';
+    job.status = cancelled ? 'cancelled' : 'failed';
+    job.video = false;
 
     try {
       await checkpoint(
         job,
-        'Stopped with error',
+        cancelled ? 'Cancelled' : 'Stopped with error',
         job.progress
       );
     } catch (checkpointError) {
@@ -1789,6 +1805,7 @@ async function runJob(job, input) {
     }
 
   } finally {
+    jobControllers.delete(job.id);
     if (activeJob?.id === job.id) {
       activeJob = null;
       busy = false;
@@ -2113,7 +2130,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
       );
 
       const jobRoute =
-        /^\/api\/jobs\/([a-f\d-]{36})(?:\/(video|download|credits|episode|plan|contact|title|description))?$/.exec(
+        /^\/api\/jobs\/([a-f\d-]{36})(?:\/(video|download|credits|episode|plan|contact|title|description|cancel))?$/.exec(
           url.pathname
         );
 
@@ -2161,6 +2178,16 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
             }
           );
 
+        } else if(req.method==='POST'&&jobRoute?.[2]==='cancel'){
+          const job=jobs.get(jobRoute[1]);
+          if(!job){sendJSON(res,404,{error:'Job not found'});return;}
+          if(job.status!=='running'){sendJSON(res,200,safeJob(job));return;}
+          const controller=jobControllers.get(job.id);
+          if(!controller){sendJSON(res,409,{error:'Job is stopping; retry shortly'});return;}
+          job.cancelRequested=true;
+          job.stage='Cancelling generation';
+          controller.abort(Error('Generation cancelled by user'));
+          sendJSON(res,202,safeJob(job));
         // GENERATE VIDEO
         } else if (
           req.method === 'POST' &&
@@ -2232,6 +2259,8 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
 
           activeJob = job;
           busy = true;
+          const controller=new AbortController();
+          jobControllers.set(id,controller);
 
           try {
             await checkpoint(
@@ -2243,6 +2272,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
             activeJob = null;
             busy = false;
             jobs.delete(id);
+            jobControllers.delete(id);
             throw error;
           }
 
@@ -2252,7 +2282,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
 
           void runWithProviders(
             input.providerKeys,
-            () => runJob(job, input)
+            () => runJob(job, input),controller.signal
           );
 
           sendJSON(

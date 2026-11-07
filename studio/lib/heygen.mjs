@@ -1,5 +1,5 @@
 import {writeFile} from 'node:fs/promises';
-import {providerValue} from './core.mjs';
+import {providerValue,generationFetch} from './core.mjs';
 
 export const HEYGEN_FREE_MODEL='heygen-voice-1-turbo-free';
 export const DEFAULT_HEYGEN_VOICE='GjEYDLj9QcrWiwxXmBbE'; // Yash: public male voice, selected by reference-style audition on Turbo Free.
@@ -46,7 +46,7 @@ export async function heygenVoice(text,language,dest,scene={},style='energetic')
  if(!/^[a-zA-Z0-9_-]{8,100}$/.test(voice))throw Error('Invalid HeyGen voice ID');
  let response;
  for(let attempt=0;attempt<4;attempt++){
-  try{response=await fetch(mode==='catalog'?'https://api.heygen.com/v3/voices/speech':'https://api.heygen.com/v3/models/audio/tts',{
+  try{response=await generationFetch(mode==='catalog'?'https://api.heygen.com/v3/voices/speech':'https://api.heygen.com/v3/models/audio/tts',{
    method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},redirect:'error',signal:AbortSignal.timeout(90000),
    body:JSON.stringify(mode==='catalog'
      ?{voice_id:voice,language:language==='en'?'en':'hi',text:String(text).replace(/\[[^\]]*\]/g,'').trim(),output_format:{encoding:'wav',sample_rate_hertz:44100}}
@@ -63,7 +63,7 @@ export async function heygenVoice(text,language,dest,scene={},style='energetic')
  const result=await response.json(),url=result.data?.audio_url;
  const address=new URL(url||'https://invalid.local');
  if(address.protocol!=='https:'||!['heygen.com','heygen.ai'].some(host=>address.hostname===host||address.hostname.endsWith('.'+host)))throw Error('HeyGen returned an unsupported audio download host');
- const download=await fetch(address,{signal:AbortSignal.timeout(45000),redirect:'error'});
+ const download=await generationFetch(address,{signal:AbortSignal.timeout(45000),redirect:'error'});
  if(!download.ok)throw Error(`HeyGen audio download HTTP ${download.status}`);
  if(Number(download.headers.get('content-length'))>12000000)throw Error('HeyGen audio too large');
  const bytes=Buffer.from(await download.arrayBuffer());

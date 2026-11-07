@@ -3,12 +3,58 @@ import assert from 'node:assert/strict';
 import { normalizeEpisode, validateThreeFacts, licenseInfo, isFreesoundCC0, buildPlan, demoEpisode,
   semanticEffectAllowed, normalizeDiagram, resolveVoiceProfile, speechPerformance,
   mediaTitleMismatch, randomFactsSource, runWithProviders, wikipediaSource,
-  chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES } from '../lib/core.mjs';
-import { validateInput,VIDEO_TTL_MS,expireJob,normalizeFrontendOrigin,makeServer } from '../server.mjs';
+  chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES,generationFetch } from '../lib/core.mjs';
+import { validateInput,VIDEO_TTL_MS,expireJob,normalizeFrontendOrigin,makeServer,processTool } from '../server.mjs';
 import {mkdir,writeFile,stat} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+
+test('cancellation aborts provider fetches and renderer processes without affecting another scope',async()=>{
+ const saved=globalThis.fetch;
+ const controller=new AbortController();let entered;
+ const ready=new Promise(resolve=>entered=resolve);
+ globalThis.fetch=async(url,options)=>new Promise((resolve,reject)=>{
+  options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true});entered();
+ });
+ try{
+  const pending=runWithProviders({},()=>generationFetch('https://example.org'),controller.signal);
+  await ready;controller.abort(Error('cancelled test'));await assert.rejects(pending,/cancelled test/);
+ }finally{globalThis.fetch=saved;}
+ const renderController=new AbortController();
+ const process=runWithProviders({},()=>processTool(globalThis.process.execPath,['-e','setInterval(()=>{},1000)']),renderController.signal);
+ const assertion=assert.rejects(process,/cancelled render/);
+ setTimeout(()=>renderController.abort(Error('cancelled render')),150);
+ await assertion;
+ assert.equal(await runWithProviders({},()=>processTool(globalThis.process.execPath,['-e','process.stdout.write("ready")'])), 'ready');
+});
+
+test('cancel endpoint stops active work, persists cancelled status and releases the generation slot',async()=>{
+ const saved=globalThis.fetch,server=makeServer();let entered,aborted=false;
+ const ready=new Promise(resolve=>entered=resolve);
+ await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const base='http://127.0.0.1:'+server.address().port;
+ globalThis.fetch=async(url,options)=>{
+  if(String(url).startsWith(base))return saved(url,options);
+  return new Promise((resolve,reject)=>{
+   options.signal.addEventListener('abort',()=>{aborted=true;reject(options.signal.reason);},{once:true});entered();
+  });
+ };
+ try{
+  const response=await saved(base+'/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:'Cancellation integration test',voiceProvider:'fish',providerKeys:{GEMINI_API_KEY:'test',FISH_API_KEY:'test'}})});
+  assert.equal(response.status,202);const job=await response.json();await ready;
+  const cancel=await saved(base+'/api/jobs/'+job.id+'/cancel',{method:'POST'});assert.equal(cancel.status,202);
+  assert.equal((await cancel.json()).cancelRequested,true);
+  let status;
+  for(let i=0;i<50;i++){
+   status=await(await saved(base+'/api/jobs/'+job.id)).json();if(status.status==='cancelled')break;
+   await new Promise(r=>setTimeout(r,20));
+  }
+  assert.equal(status.status,'cancelled');assert.equal(aborted,true);assert.equal(status.videoUrl,null);
+  for(let i=0;i<50;i++){if(!(await(await saved(base+'/api/health')).json()).busy)break;await new Promise(r=>setTimeout(r,20));}
+  assert.equal((await(await saved(base+'/api/health')).json()).busy,false);
+  assert.equal((await saved(base+'/api/jobs/'+job.id+'/cancel',{method:'POST'})).status,200);
+ }finally{globalThis.fetch=saved;await new Promise(ok=>server.close(ok));}
+});
 
 test('deployment origin normalization tolerates copied quotes and trailing slashes without allowing other sites',async()=>{
  assert.equal(normalizeFrontendOrigin(' "https://facts-example.netlify.app/" '),'https://facts-example.netlify.app');

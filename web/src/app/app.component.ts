@@ -5,7 +5,8 @@ import { HttpClient } from '@angular/common/http';
 import { timeout } from 'rxjs';
 
 interface Job {
-  id: string; status: 'running' | 'failed' | 'complete'; stage: string; progress: number;
+  id: string; status: 'running' | 'failed' | 'complete' | 'cancelled'; stage: string; progress: number;
+  cancelRequested?: boolean;
   title: string; topic: string; category?: string; error?: string; warnings: string[]; demo?: boolean;
   youtubeTitle?: string; uploadTitleUrl?: string; uploadDescriptionUrl?: string;
   size?: [number,number];
@@ -158,12 +159,12 @@ interface Health {
         </section>
 
         <section class="panel preview">
-          <div class="panel-heading result-heading"><div><span class="mini-label">02 / OUTPUT</span><h2>Your documentary</h2></div><span class="status" [class.complete]="job?.status === 'complete'">{{ job?.status === 'complete' ? 'RENDER READY' : job?.status === 'running' ? 'GENERATING' : 'AWAITING FILM' }}</span></div>
+          <div class="panel-heading result-heading"><div><span class="mini-label">02 / OUTPUT</span><h2>Your documentary</h2></div><span class="status" [class.complete]="job?.status === 'complete'">{{ job?.status === 'complete' ? 'RENDER READY' : job?.status === 'running' ? 'GENERATING' : job?.status === 'cancelled' ? 'CANCELLED' : 'AWAITING FILM' }}</span></div>
           <div class="screen" [class.has-video]="job?.status === 'complete'" [style.aspect-ratio]="previewAspectRatio">
             <video *ngIf="job?.status === 'complete' && job?.videoUrl" [src]="job!.videoUrl!" controls playsinline preload="metadata"></video>
             <div class="empty" *ngIf="job?.status !== 'complete'"><span class="frame-top">FIG. 01 <span>{{ visualStyle === 'reference-news' ? '9:16 / SAFE FRAME' : '9:16 / PAPER CUT' }}</span></span><div class="empty-symbol">✳</div><b>{{ job?.status === 'running' ? 'WORK IN\nPROGRESS' : 'YOUR FILM\nBEGINS HERE' }}</b><p>{{ job?.stage || 'Ready when you are.' }}</p><span class="frame-bottom">A WORLD OF FACTS · ONE CLICK</span></div>
           </div>
-          <div *ngIf="job?.status === 'running'" class="progress-area"><div class="progress-title"><strong>{{ job?.stage }}</strong><span>{{ job?.progress }}%</span></div><div class="progress-track"><div [style.width.%]="job?.progress || 0"></div></div><small>Videos render locally; realistic processing times depend on machine and voice quota.</small></div>
+          <div *ngIf="job?.status === 'running'" class="progress-area"><div class="progress-title"><strong>{{ job?.stage }}</strong><span>{{ job?.progress }}%</span></div><div class="progress-track"><div [style.width.%]="job?.progress || 0"></div></div><small>Processing time depends on the server and providers.</small><button class="secondary" (click)="cancelGeneration()" [disabled]="cancelling || job?.cancelRequested">{{ cancelling || job?.cancelRequested ? 'CANCELLING?' : 'CANCEL GENERATION' }}</button></div>
           <div *ngIf="job?.status === 'complete'" class="finished"><h3>{{ job?.title }}</h3><p *ngIf="job?.category">Category: {{ job?.category }}</p><p>Topic: {{ job?.topic }} · {{ job?.duration | number:'1.0-0' }}s · Vertical MP4</p><div class="actions"><a class="download" [href]="job!.downloadUrl!">↓ DOWNLOAD MP4</a><a [href]="'/api/jobs/' + job!.id + '/credits'" download>ASSET CREDITS</a><a *ngIf="job?.uploadDescriptionUrl" [href]="job!.uploadDescriptionUrl!" download>UPLOAD DESCRIPTION</a><a [href]="job!.storyboardUrl!" download>GEMINI STORYBOARD JSON</a><a [href]="job!.animationPlanUrl!" download>ANIMATION PLAN JSON</a></div><p *ngFor="let source of job!.sources">Fact source: <a [href]="source.url" target="_blank" rel="noopener noreferrer">{{ source.name }}</a></p><p *ngIf="job?.demo" class="config">Offline demo only — illustrative art, no Gemini, Cartesia or Freesound calls.</p><div class="contact-preview" *ngIf="job?.contactUrl"><h4>SCENE-BY-SCENE PREVIEW</h4><a [href]="job!.contactUrl!" target="_blank" rel="noopener noreferrer"><img [src]="job!.contactUrl!" alt="Full scene contact sheet from original renderer" loading="lazy"></a></div></div>
           <div *ngIf="job?.status === 'complete' && job?.youtubeTitle" class="finished"><label>YOUTUBE UPLOAD TITLE</label><p>{{ job!.youtubeTitle }}</p><button class="secondary" (click)="copyUploadTitle()">{{ titleCopied ? 'COPIED' : 'COPY TITLE' }}</button><a *ngIf="job?.uploadTitleUrl" [href]="job!.uploadTitleUrl!" download>DOWNLOAD TITLE TXT</a></div>
           <p *ngIf="job?.status === 'complete'" class="config">Auto-deletes 30 minutes after generation. Download your video before then.<span *ngIf="job?.expiresAt"> Available until {{ job!.expiresAt | date:'shortTime' }}.</span></p>
@@ -180,6 +181,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private pollTimer?: ReturnType<typeof setInterval>;
   private polling = false;
   private disconnectCount = 0;
+  cancelling = false;
 
   health: Health | null = null;
   job: Job | null = null;
@@ -363,6 +365,15 @@ export class AppComponent implements OnInit, OnDestroy {
   async copyUploadTitle(): Promise<void> {
     try { await navigator.clipboard.writeText(this.job?.youtubeTitle || ''); this.titleCopied = true; }
     catch { this.error = 'Copy unavailable. Select the title text or download the TXT file.'; }
+  }
+
+  cancelGeneration(): void {
+    if(!this.job || this.job.status!=='running' || this.cancelling || this.job.cancelRequested)return;
+    this.cancelling=true;
+    this.http.post<Job>('/api/jobs/'+this.job.id+'/cancel',{}).pipe(timeout(20000)).subscribe({
+      next:job=>{this.job=job;this.cancelling=false;if(job.status!=='running'){this.working=false;this.stopPolling();}},
+      error:response=>{this.cancelling=false;this.error=response.error?.error||'Could not cancel. Please retry.';}
+    });
   }
 
   async selectLogo(event: Event): Promise<void> {

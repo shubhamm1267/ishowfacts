@@ -9,10 +9,18 @@ import {editorialIssues,repairReviewed,QualityError,narrationIssues} from './qua
 import {createKeyScheduler} from './media-workers.mjs';
 
 const providerScope = new AsyncLocalStorage();
+const cancellationScope = new AsyncLocalStorage();
+export const generationSignal = () => cancellationScope.getStore();
+export function checkGenerationCancelled(){generationSignal()?.throwIfAborted();}
+export function generationFetch(url,options={}){
+ checkGenerationCancelled();
+ const signal=generationSignal();
+ return fetch(url,{...options,...(signal?{signal:options.signal?AbortSignal.any([signal,options.signal]):signal}:{})});
+}
 const geminiScheduler=createKeyScheduler();
 
-export function runWithProviders(keys, operation) {
-  return providerScope.run(keys || {}, operation);
+export function runWithProviders(keys, operation, signal=generationSignal()) {
+  return cancellationScope.run(signal,()=>providerScope.run(keys || {}, operation));
 }
 
 export function providerValue(name) {
@@ -37,7 +45,12 @@ export async function verificationGemini(prompt,media=null,pass=1){
  return runWithProviders(overrides,()=>gemini(prompt,media,{review:true}));
 }
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+const sleep = ms => new Promise((resolve,reject) => {
+ const signal=generationSignal();signal?.throwIfAborted();
+ const abort=()=>{clearTimeout(timer);reject(signal.reason);};
+ const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},ms);
+ signal?.addEventListener('abort',abort,{once:true});
+});
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const brief = (s, n = 150) => {
   const text=String(s||'').trim().normalize('NFC');if(text.length<=n)return text;
@@ -84,7 +97,7 @@ export async function api(url, init = {}, retries = 2) {
   const { timeoutMs = 45_000, ...requestInit } = init;
   for (let i = 0; ; i++) {
     let response;
-    try { response = await fetch(url, { ...requestInit, signal: AbortSignal.timeout(timeoutMs) }); }
+    try { response = await generationFetch(url, { ...requestInit, signal: AbortSignal.timeout(timeoutMs) }); }
     catch (e) { if (i >= retries) throw Error(`Network failed: ${e.message}`); await sleep(900 * (i + 1) ** 2); continue; }
     if (response.ok) return response;
     const reason = (await response.text()).slice(0, 300);
@@ -135,16 +148,18 @@ async function geminiWithFallback(model, body, keys) {
   if(round)await sleep(1000*2**(round-1));
   const remaining=new Set(retryKeys),temporary=[];
   while(remaining.size){
+    checkGenerationCancelled();
     const lease=await geminiScheduler.acquire([...remaining]);
     const key=lease.key,index=keys.indexOf(key);remaining.delete(key);
     try{
     let response;
     try {
-      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      response = await generationFetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
         body, signal: AbortSignal.timeout(45_000), redirect: 'error',
       });
     } catch {
+      checkGenerationCancelled();
       failures.push(`key slot ${index + 1}: network/timeout`);
       continue;
     }
@@ -811,7 +826,7 @@ export async function fishVoice(text, language, dest, scene = {}, style = 'energ
   for (let attempt = 0; attempt < 3; attempt++) {
     let response;
     try {
-      response = await fetch('https://api.fish.audio/v1/tts', {
+      response = await generationFetch('https://api.fish.audio/v1/tts', {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(90000),
         headers: {Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', model: FISH_FREE_MODEL},
         body: JSON.stringify(body)
