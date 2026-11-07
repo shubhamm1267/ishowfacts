@@ -72,6 +72,11 @@ Node, Python and FFmpeg; deploy it as a Docker web service, not a Netlify Functi
    says RENDER_API_URL is missing, add it and trigger a new frontend deploy.
 6. If rendering is killed or runs out of memory, use a backend instance with
    sufficient RAM/CPU; a successful health check does not test video rendering.
+7. Wikimedia HTTP 429 means research/media access is rate limited, not that a
+   Gemini key is invalid. Requests identify this app, share a one-second pacing
+   queue, and respect the provider's Retry-After cooldown. Avoid repeatedly
+   restarting failed jobs during that cooldown. This does not guarantee access
+   from a cloud IP; the provider's limits still apply.
 
 Completed/failed jobs expire after 30 minutes while the service is running.
 Render's ephemeral storage can disappear earlier on restart/redeploy/spin-down,

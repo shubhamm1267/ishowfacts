@@ -3,12 +3,39 @@ import assert from 'node:assert/strict';
 import { normalizeEpisode, validateThreeFacts, licenseInfo, isFreesoundCC0, buildPlan, demoEpisode,
   semanticEffectAllowed, normalizeDiagram, resolveVoiceProfile, speechPerformance,
   mediaTitleMismatch, randomFactsSource, runWithProviders, wikipediaSource,
-  chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES,generationFetch } from '../lib/core.mjs';
+  chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES,generationFetch,createWikimediaGate,wikimediaRetryMs } from '../lib/core.mjs';
 import { validateInput,VIDEO_TTL_MS,expireJob,normalizeFrontendOrigin,makeServer,processTool } from '../server.mjs';
 import {mkdir,writeFile,stat} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+
+test('Wikimedia pacing serializes requests and respects shared Retry-After cooldown',async()=>{
+ let clock=1000,calls=0;const starts=[];
+ const gate=createWikimediaGate({now:()=>clock,wait:async ms=>{clock+=ms;}});
+ const operation=()=>{calls++;starts.push(clock);return new Response('{}');};
+ await Promise.all([gate.run(operation),gate.run(operation),gate.run(operation)]);
+ assert.deepEqual(starts,[1000,2000,3000]);
+ await gate.run(()=>new Response('',{status:429,headers:{'Retry-After':'60'}}));
+ await assert.rejects(gate.run(operation),/retry after 60 seconds/);assert.equal(calls,3);
+ clock+=60000;await gate.run(operation);assert.equal(calls,4);
+ assert.equal(wikimediaRetryMs('5',0),5000);
+ assert.equal(wikimediaRetryMs('Thu, 01 Jan 1970 00:01:00 GMT',0),60000);
+ assert.equal(wikimediaRetryMs(null,0),10000);
+ const controller=new AbortController();controller.abort(Error('cancelled'));
+ await assert.rejects(gate.run(operation,controller.signal),/cancelled/);assert.equal(calls,4);
+});
+
+test('Wikimedia requests identify the app while other providers retain their headers',async()=>{
+ const saved=globalThis.fetch;const calls=[];
+ try{
+  globalThis.fetch=async(url,options)=>{calls.push({url:String(url),headers:new Headers(options.headers)});return new Response('{}');};
+  await generationFetch('https://en.wikipedia.org/w/api.php');
+  await generationFetch('https://example.org/api',{headers:{Authorization:'test'}});
+  assert.match(calls[0].headers.get('user-agent'),/IShowFacts.*github.com\/shubhamm1267\/ishowfacts/);
+  assert.equal(calls[1].headers.get('user-agent'),null);assert.equal(calls[1].headers.get('authorization'),'test');
+ }finally{globalThis.fetch=saved;}
+});
 
 test('cancellation aborts provider fetches and renderer processes without affecting another scope',async()=>{
  const saved=globalThis.fetch;

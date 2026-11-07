@@ -12,10 +12,44 @@ const providerScope = new AsyncLocalStorage();
 const cancellationScope = new AsyncLocalStorage();
 export const generationSignal = () => cancellationScope.getStore();
 export function checkGenerationCancelled(){generationSignal()?.throwIfAborted();}
+export function wikimediaRetryMs(value,now=Date.now()){
+ const text=String(value||'').trim();
+ if(/^\d+(?:\.\d+)?$/.test(text))return Math.max(0,Number(text)*1000);
+ const date=Date.parse(text);return Number.isFinite(date)?Math.max(0,date-now):10000;
+}
+export function createWikimediaGate({now=Date.now,wait=ms=>new Promise(r=>setTimeout(r,ms)),gapMs=1000}={}){
+ let queue=Promise.resolve(),nextAt=0,blockedUntil=0;
+ return {run(operation,signal){
+  const pending=queue.then(async()=>{
+   signal?.throwIfAborted();
+   if(now()<blockedUntil)throw Error(`Wikimedia rate limited; retry after ${Math.ceil((blockedUntil-now())/1000)} seconds`);
+   if(now()<nextAt)await wait(nextAt-now());
+   signal?.throwIfAborted();
+   try{
+    const response=await operation();
+    if(response.status===429||response.status===503)blockedUntil=now()+Math.max(5000,wikimediaRetryMs(response.headers.get('retry-after'),now()));
+    return response;
+   }finally{nextAt=now()+gapMs;}
+  });
+  queue=pending.catch(()=>{});return pending;
+ }};
+}
+// One shared gate per HTTP transport; isolated transports (e.g. tests) must
+// not inherit a different transport's rate-limit state.
+const wikimediaGates=new WeakMap();
 export function generationFetch(url,options={}){
  checkGenerationCancelled();
  const signal=generationSignal();
- return fetch(url,{...options,...(signal?{signal:options.signal?AbortSignal.any([signal,options.signal]):signal}:{})});
+ const init={...options,...(signal?{signal:options.signal?AbortSignal.any([signal,options.signal]):signal}:{})};
+ const hostname=new URL(url).hostname;
+ if(['wikipedia.org','wikimedia.org'].some(domain=>hostname===domain||hostname.endsWith('.'+domain))){
+  const headers=new Headers(options.headers);
+  headers.set('User-Agent','IShowFacts/1.0 (https://github.com/shubhamm1267/ishowfacts)');
+  const transport=globalThis.fetch;
+  if(!wikimediaGates.has(transport))wikimediaGates.set(transport,createWikimediaGate());
+  return wikimediaGates.get(transport).run(()=>transport(url,{...init,headers}),signal);
+ }
+ return fetch(url,init);
 }
 const geminiScheduler=createKeyScheduler();
 
@@ -98,8 +132,12 @@ export async function api(url, init = {}, retries = 2) {
   for (let i = 0; ; i++) {
     let response;
     try { response = await generationFetch(url, { ...requestInit, signal: AbortSignal.timeout(timeoutMs) }); }
-    catch (e) { if (i >= retries) throw Error(`Network failed: ${e.message}`); await sleep(900 * (i + 1) ** 2); continue; }
+    catch (e) { checkGenerationCancelled(); if (/^Wikimedia rate limited/.test(e.message))throw e; if (i >= retries) throw Error(`Network failed: ${e.message}`); await sleep(900 * (i + 1) ** 2); continue; }
     if (response.ok) return response;
+    if(response.status===429&&/(^|\.)(wikipedia|wikimedia)\.org$/.test(new URL(url).hostname)){
+      await response.body?.cancel();
+      throw Error(`Wikimedia rate limited; retry after at least ${Math.ceil(Math.max(5000,wikimediaRetryMs(response.headers.get('retry-after')))/1000)} seconds. Research/media access is temporarily unavailable.`);
+    }
     const reason = (await response.text()).slice(0, 300);
     if (i >= retries || ![429, 500, 502, 503, 504].includes(response.status)) throw Error(`Provider HTTP ${response.status}: ${reason}`);
     await sleep(900 * (i + 1) ** 2);
