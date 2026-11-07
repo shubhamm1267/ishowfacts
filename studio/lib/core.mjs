@@ -932,6 +932,7 @@ export async function fishVoice(text, language, dest, scene = {}, style = 'energ
         body: JSON.stringify(body)
       });
     } catch {
+      checkGenerationCancelled();
       if (attempt === 2) throw Error('Fish Audio network/timeout after retries');
       await sleep(1000 * 2 ** attempt); continue;
     }

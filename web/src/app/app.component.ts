@@ -7,7 +7,10 @@ import { timeout } from 'rxjs';
 interface Job {
   instanceId?: string;
   selectedTopics?: string[];
-  id: string; status: 'running' | 'failed' | 'complete' | 'cancelled'; stage: string; progress: number;
+  id: string; status: 'running' | 'awaiting_approval' | 'failed' | 'complete' | 'cancelled'; stage: string; progress: number;
+  preview?: {title:string;headline:string;topic:string;narration:string};
+  performance?: {elapsedSeconds:number;stages:{stage:string;seconds:number}[]};
+  storyPreparationSeconds?: number;
   cancelRequested?: boolean;
   title: string; topic: string; category?: string; error?: string; warnings: string[]; demo?: boolean;
   youtubeTitle?: string; uploadTitleUrl?: string; uploadDescriptionUrl?: string;
@@ -162,14 +165,29 @@ interface Health {
 
         <section class="panel preview">
           <div class="panel-heading result-heading"><div><span class="mini-label">02 / OUTPUT</span><h2>Your documentary</h2></div><span class="status" [class.complete]="job?.status === 'complete'">{{ job?.status === 'complete' ? 'RENDER READY' : job?.status === 'running' ? 'GENERATING' : job?.status === 'cancelled' ? 'CANCELLED' : 'AWAITING FILM' }}</span></div>
-          <div class="screen" [class.has-video]="job?.status === 'complete'" [style.aspect-ratio]="previewAspectRatio">
+          <div class="screen" *ngIf="job?.status !== 'awaiting_approval'" [class.has-video]="job?.status === 'complete'" [style.aspect-ratio]="previewAspectRatio">
             <video *ngIf="job?.status === 'complete' && job?.videoUrl" [src]="job!.videoUrl!" controls playsinline preload="metadata"></video>
             <div class="empty" *ngIf="job?.status !== 'complete'"><span class="frame-top">FIG. 01 <span>{{ visualStyle === 'reference-news' ? '9:16 / SAFE FRAME' : '9:16 / PAPER CUT' }}</span></span><div class="empty-symbol">✳</div><b>{{ job?.status === 'running' ? 'WORK IN\nPROGRESS' : 'YOUR FILM\nBEGINS HERE' }}</b><p>{{ job?.stage || 'Ready when you are.' }}</p><span class="frame-bottom">A WORLD OF FACTS · ONE CLICK</span></div>
           </div>
           <div *ngIf="job?.status === 'running'" class="progress-area"><div class="progress-title"><strong>{{ job?.stage }}</strong><span>{{ job?.progress }}%</span></div><div class="progress-track"><div [style.width.%]="job?.progress || 0"></div></div><small>Processing time depends on the server and providers.</small><button class="secondary" (click)="cancelGeneration()" [disabled]="cancelling || job?.cancelRequested">{{ cancelling || job?.cancelRequested ? 'CANCELLING?' : 'CANCEL GENERATION' }}</button></div>
           <div *ngIf="job?.status === 'complete'" class="finished"><h3>{{ job?.title }}</h3><p *ngIf="job?.category">Category: {{ job?.category }}</p><p>Topic: {{ job?.topic }} · {{ job?.duration | number:'1.0-0' }}s · Vertical MP4</p><div class="actions"><a class="download" [href]="job!.downloadUrl!">↓ DOWNLOAD MP4</a><a [href]="'/api/jobs/' + job!.id + '/credits'" download>ASSET CREDITS</a><a *ngIf="job?.uploadDescriptionUrl" [href]="job!.uploadDescriptionUrl!" download>UPLOAD DESCRIPTION</a><a [href]="job!.storyboardUrl!" download>GEMINI STORYBOARD JSON</a><a [href]="job!.animationPlanUrl!" download>ANIMATION PLAN JSON</a></div><p *ngFor="let source of job!.sources">Fact source: <a [href]="source.url" target="_blank" rel="noopener noreferrer">{{ source.name }}</a></p><p *ngIf="job?.demo" class="config">Offline demo only — illustrative art, no Gemini, Cartesia or Freesound calls.</p><div class="contact-preview" *ngIf="job?.contactUrl"><h4>SCENE-BY-SCENE PREVIEW</h4><a [href]="job!.contactUrl!" target="_blank" rel="noopener noreferrer"><img [src]="job!.contactUrl!" alt="Full scene contact sheet from original renderer" loading="lazy"></a></div></div>
           <div *ngIf="job?.status === 'complete' && job?.youtubeTitle" class="finished"><label>YOUTUBE UPLOAD TITLE</label><p>{{ job!.youtubeTitle }}</p><button class="secondary" (click)="copyUploadTitle()">{{ titleCopied ? 'COPIED' : 'COPY TITLE' }}</button><a *ngIf="job?.uploadTitleUrl" [href]="job!.uploadTitleUrl!" download>DOWNLOAD TITLE TXT</a></div>
-          <p *ngIf="job?.status === 'complete'" class="config">Auto-deletes 30 minutes after generation. Download your video before then.<span *ngIf="job?.expiresAt"> Available until {{ job!.expiresAt | date:'shortTime' }}.</span></p>
+          <details *ngIf="job?.performance" class="config">
+            <summary>Processing time: {{ job!.performance!.elapsedSeconds | number:'1.0-0' }} seconds</summary>
+            <p *ngIf="job?.storyPreparationSeconds">Story preparation: {{ job!.storyPreparationSeconds | number:'1.0-0' }} seconds. Approval waiting time is excluded.</p>
+            <p *ngFor="let stage of job!.performance!.stages">{{ stage.stage }}: {{ stage.seconds | number:'1.0-1' }}s</p>
+          </details>
+          <section *ngIf="job?.status === 'awaiting_approval' && job?.preview" class="story-preview">
+            <h2>Review your story</h2>
+            <p><strong>Topic:</strong> {{ job!.preview!.topic }}</p>
+            <p><strong>Title:</strong> {{ job!.preview!.title }}</p>
+            <p><strong>On-screen headline:</strong> {{ job!.preview!.headline }}</p>
+            <p style="white-space:pre-wrap;line-height:1.8">{{ job!.preview!.narration }}</p>
+            <button class="primary" (click)="approveStory()" [disabled]="working">MAKE THIS VIDEO</button>
+            <button class="secondary" (click)="newStory()" [disabled]="working">DIFFERENT TOPIC / NEW STORY</button>
+            <p class="config">Voice and footage start after approval. Preview expires after 30 minutes.</p>
+          </section>
+          <p *ngIf="job?.status === 'complete'" class="config">Auto-deletes 5 minutes after completion, including job assets. Download your video before then.<span *ngIf="job?.expiresAt"> Available until {{ job!.expiresAt | date:'shortTime' }}.</span></p>
           <div *ngIf="job?.warnings?.length" class="warnings"><strong>Asset notes</strong><p *ngFor="let w of job!.warnings">{{ w }}</p></div>
         </section>
       </main>
@@ -242,9 +260,10 @@ export class AppComponent implements OnInit, OnDestroy {
       next: health => {
         this.health = health;
 
-        if (health.activeJobId) {
+        const lastJob=health.activeJobId || localStorage.getItem('paperdoc_active_job');
+        if (lastJob) {
           this.working = true;
-          this.startPolling(health.activeJobId);
+          this.startPolling(lastJob);
         }
       },
       error: () => {
@@ -333,6 +352,7 @@ export class AppComponent implements OnInit, OnDestroy {
       '/api/jobs',
       {
         topic: this.topic,
+        previewFirst: !demo,
         recentTopics:this.recentTopics(),
         factMode: this.factMode,
         voiceAccent: this.voiceAccent,
@@ -353,6 +373,7 @@ export class AppComponent implements OnInit, OnDestroy {
     ).subscribe({
       next: job => {
         this.job = job;
+        localStorage.setItem('paperdoc_active_job',job.id);
         this.startPolling(job.id);
       },
 
@@ -382,6 +403,21 @@ export class AppComponent implements OnInit, OnDestroy {
     const selected=(job.selectedTopics||[]).filter(t=>typeof t==='string'&&!!t.trim()&&t.length<=140);
     if(!selected.length)return;
     try{localStorage.setItem('paperdoc_recent_topics',JSON.stringify([...new Set([...this.recentTopics(),...selected])].slice(-100)));}catch{/* Backend history still protects this instance. */}
+  }
+
+  newStory(): void {
+    this.topic='';
+    this.generate(false);
+  }
+
+  approveStory(): void {
+    if(this.working || this.job?.status!=='awaiting_approval')return;
+    this.working=true;this.error='';
+    this.http.post<Job>('/api/jobs/'+this.job.id+'/approve',{providerKeys:{...this.settings}})
+      .pipe(timeout(20000)).subscribe({
+        next:job=>{this.job=job;this.startPolling(job.id);},
+        error:response=>{this.working=false;this.error=response.error?.error||'Could not approve story. Please retry.';}
+      });
   }
 
   cancelGeneration(): void {
@@ -491,7 +527,7 @@ export class AppComponent implements OnInit, OnDestroy {
             ? 'The backend instance changed and this job is unavailable. Check Render Events for a restart or deploy, then generate again.'
             : this.job?.status === 'running'
               ? 'The running job is no longer available on the backend. Check Render Events for a restart or memory error, then generate again.'
-              : 'This job is unavailable. Finished jobs are deleted after 30 minutes.';
+              : 'This job is unavailable. Completed videos are deleted after 5 minutes; story previews after 30 minutes.';
 
           return;
         }
