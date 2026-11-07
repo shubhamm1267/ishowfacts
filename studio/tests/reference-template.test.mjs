@@ -63,7 +63,7 @@ test('Hindi copyeditor outage cannot silently return an unchecked creative draft
    if(prompt.includes('copyeditor')){copyCalls++;return new Response('unavailable',{status:400});}
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(draft)}]}}]});
   };
-  await assert.rejects(runWithProviders({GEMINI_API_KEY:'test'},()=>writeEpisode('waves',{url:'https://example.com',extract:'Wind makes surface waves.'},'hi',20)),/proofreading must pass/);
+  await assert.rejects(runWithProviders({GEMINI_API_KEY:'test'},()=>writeEpisode('waves',{url:'https://example.com',extract:'Wind makes surface waves.'},'hi',20)),/Hindi copy review failed: Gemini HTTP 400/);
   assert.equal(copyCalls,3);
  }finally{globalThis.fetch=saved;}
 });

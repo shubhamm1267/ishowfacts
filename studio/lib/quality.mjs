@@ -5,6 +5,11 @@ export class QualityError extends Error{
  constructor(message,issues=[],indices=[]){super(message);this.name='QualityError';this.issues=issues;this.indices=indices;}
 }
 
+export function reviewFailureDetails(error){
+ const items=Array.isArray(error?.issues)?error.issues.map(String).filter(Boolean):[];
+ return items.length?[...new Set(items)].slice(0,6).join('; ').slice(0,1800):String(error?.message||'Review failed');
+}
+
 // Correct only clear slow scene outliers; never slow an energetic take down.
 // A conservative cap avoids large time-stretch artifacts or pitch changes.
 export function narrationTempo(text,seconds,{energetic=false,language='hi'}={}){
@@ -88,6 +93,7 @@ export function narrationIssues(review,{requireNatural=false}={}){
 }
 export async function repairReviewed(initial,{review,repair,validate=()=>{},attempts=2,onReview=async()=>{}}){
  let candidate=initial;
+ const previousIssues=[];
  for(let attempt=0;attempt<=attempts;attempt++){
   let result;
   try{validate(candidate);}catch(error){
@@ -97,7 +103,8 @@ export async function repairReviewed(initial,{review,repair,validate=()=>{},atte
   result ||= await review(candidate,attempt);
   await onReview(result,candidate,attempt);
   if(!result.issues.length)return {episode:candidate,review:result.review,repairs:attempt};
-  if(attempt===attempts)throw new QualityError('Automatic editorial repair did not pass',result.issues);
-  candidate=await repair(candidate,result.issues,attempt);
+  if(attempt===attempts)throw new QualityError('Storyboard review failed: '+reviewFailureDetails({issues:result.issues}),result.issues);
+  candidate=await repair(candidate,result.issues,attempt,[...new Set(previousIssues)]);
+  previousIssues.push(...result.issues);
  }
 }

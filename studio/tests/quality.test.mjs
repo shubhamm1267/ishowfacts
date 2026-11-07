@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {editorialIssues,shotReview,renderedIssues,narrationIssues,repairReviewed,QualityError,narrationTempo} from '../lib/quality.mjs';
-import {verificationGemini,runWithProviders,finalizeEpisode,repairMediaBrief} from '../lib/core.mjs';
+import {verificationGemini,runWithProviders,finalizeEpisode,repairMediaBrief,applyEditorialTextRepair} from '../lib/core.mjs';
 import {framingReviewer} from '../lib/visual-quality.mjs';
 import {mkdtemp,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -9,6 +9,26 @@ import {tmpdir} from 'node:os';
 
 const source={extract:'The animal is the tallest living terrestrial animal. Its diet includes leaves. Males engage in necking.'};
 const episode={scenes:[{},{}]};
+
+test('editorial text repair preserves shot identity, media and timing while accepting text-only responses',()=>{
+ const story={headlineText:'Old hook',language:'hi',facts:['one','two','three'],scenes:[{factIndex:0,narration:'old',visual:'video',videoQuery:'original animal',duration:5,pointOut:{target:'animal',label:'old'}}]};
+ const update={facts:['a','b','c'],headlineText:'New hook',scenes:[{narration:'corrected',line1:'Caption',visual:'diagram',videoQuery:'wrong animal',duration:100,pointOutLabel:'new'}]};
+ const fixed=applyEditorialTextRepair(story,update);
+ assert.equal(fixed.scenes[0].visual,'video');assert.equal(fixed.scenes[0].videoQuery,'original animal');assert.equal(fixed.scenes[0].duration,5);
+ assert.equal(fixed.scenes[0].factIndex,0);assert.equal(fixed.scenes[0].narration,'corrected');assert.equal(fixed.scenes[0].pointOut.label,'new');
+ assert.equal(story.scenes[0].narration,'old');assert.equal(fixed.headlineText,'New hook');
+ assert.throws(()=>applyEditorialTextRepair(story,{...update,scenes:[]}),/shot count/);
+ assert.throws(()=>applyEditorialTextRepair(story,{...update,scenes:[{narration:'fixed',factIndex:2}]}),/fact assignment/);
+});
+
+test('repair iterations retain earlier rejection reasons and expose exact final issues',async()=>{
+ const history=[];let n=0;
+ await assert.rejects(repairReviewed({}, {
+  attempts:2,review:async()=>({review:{approved:false},issues:[['Opening needs comedy','Unsupported causal claim','Incorrect Hindi spelling'][n++]]}),
+  repair:async(e,issues,attempt,previous)=>{history.push(previous);return e;}
+ }),e=>e instanceof QualityError&&e.message.includes('Incorrect Hindi spelling')&&e.issues[0]==='Incorrect Hindi spelling');
+ assert.deepEqual(history,[[],['Opening needs comedy']]);
+});
 
 test('energetic narration corrects only slow outliers with a bounded pitch-preserving tempo',()=>{
  const line='one two three four five six seven eight nine ten';

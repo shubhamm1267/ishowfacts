@@ -5,7 +5,7 @@ import { normalizeDirective } from './director.mjs';
 import { normalizePointOut, focusTracks, normalizeHookTitle, prepareFocusReview, layoutHeadline } from './reference-style.mjs';
 import {visibleText,hindiTextIssues} from './hindi-quality.mjs';
 import {imageDimensions,highQualityImage} from './image-quality.mjs';
-import {editorialIssues,repairReviewed,QualityError,narrationIssues} from './quality.mjs';
+import {editorialIssues,repairReviewed,QualityError,narrationIssues,reviewFailureDetails} from './quality.mjs';
 import {createKeyScheduler} from './media-workers.mjs';
 
 const providerScope = new AsyncLocalStorage();
@@ -469,6 +469,7 @@ export async function wikipediaSource(topic) {
 export async function writeEpisode(topic, source, language, seconds, humorIntensity = 'edgy', {onStage=async()=>{},debugFolder,mediaPolicy=null,hookContext=null}={}) {
   const prompt=episodePrompt(topic,source,language,seconds,humorIntensity,mediaPolicy,hookContext);
   let problem = 'invalid scene structure';
+  let lastIssues=[];
   for (let attempt = 0; attempt < 3; attempt++) {
     await onStage(attempt?'Repairing sourced storyboard':'Drafting curiosity hook and sourced facts');
     const answer = await gemini(attempt === 0 ? prompt : `${prompt}\nIMPORTANT REPAIR: Previous attempt gave ${problem}. Produce a SINGLE TOP-LEVEL JSON object with scenes as an ARRAY of ${mediaPolicy?mediaPolicy.total:'5-8'} complete shot objects. The key MUST be named exactly "scenes". No nested planning or metadata-only answer.`,null,{review:true});
@@ -524,21 +525,23 @@ export async function writeEpisode(topic, source, language, seconds, humorIntens
             const hookIssues=hindiHookIssues(changed);if(hookIssues.length)throw Error(hookIssues[0]);
             await onStage('Fitting headline and reviewing Hindi facts');
             const finished=await polishEpisodeHeadline(changed, source, language);
-            return await finalizeEpisode(finished,source,{requestedTopic:topic,onStage,debugFolder,hookContext,seconds});
+            return await finalizeEpisode(finished,source,{requestedTopic:topic,onStage,debugFolder,hookContext,seconds,reviewPrefix:`draft-${attempt}-`});
           }
           throw Error('Hindi copyeditor returned an incomplete or incompatible draft');
-        } catch(error) { throw Error(`Hindi proofreading must pass before narration: ${error.message}`); }
+        } catch(error) { if(error instanceof QualityError)throw error; throw Error(`Hindi copy review failed: ${error.message}`); }
       }
       if (needsHindiFactTranslation)
         throw Error('All three fact claims must be in Devanagari; Hindi copy-edit must translate facts');
-      return await finalizeEpisode(await polishEpisodeHeadline(candidate,source,language),source,{requestedTopic:topic,onStage,debugFolder,hookContext,seconds});
+      return await finalizeEpisode(await polishEpisodeHeadline(candidate,source,language),source,{requestedTopic:topic,onStage,debugFolder,hookContext,seconds,reviewPrefix:`draft-${attempt}-`});
     }
     catch (error) {
-      problem = `${error.message}; received keys ${Object.keys(answer || {}).join(',').slice(0, 100)}`;
+      checkGenerationCancelled();
+      problem = error instanceof QualityError ? reviewFailureDetails(error) : error.message;
+      lastIssues=error instanceof QualityError?error.issues:[error.message];
       console.warn(`[STORYBOARD] Review/repair ${attempt+1}/3: ${error.message}`);
     }
   }
-  throw Error(`Gemini could not produce a complete factual storyboard after 3 attempts (${problem})`);
+  throw new QualityError(`Storyboard could not pass review after 3 drafts: ${problem}`,lastIssues);
 }
 
 export async function polishEpisodeHeadline(episode, source, language) {
@@ -559,7 +562,20 @@ export async function auditHindiEpisode(episode,source){
   if(audit.approved!==true||!Array.isArray(audit.issues)||audit.issues.length)throw Error('Independent Hindi language/fact review did not pass: '+JSON.stringify(audit.issues||['Missing approval']).slice(0,900));
 }
 
-export async function finalizeEpisode(initial,source,{requestedTopic=source.title,onStage=async()=>{},debugFolder,hookContext=null,seconds=null}={}){
+export function applyEditorialTextRepair(episode,copy){
+ if(!Array.isArray(copy?.scenes)||copy.scenes.length!==episode.scenes.length)
+  throw new QualityError('Text repair must preserve the exact shot count',['Return one text update for every original scene, in original order']);
+ for(const [index,edit]of copy.scenes.entries()){
+  if(edit.factIndex!==undefined&&edit.factIndex!==episode.scenes[index].factIndex)
+   throw new QualityError('Text repair changed fact assignment',[`Scene ${index+1} must keep its original factIndex`]);
+ }
+ let changed;
+ try{changed=applyHindiCopy(episode,copy);}catch(error){throw new QualityError('Incomplete text repair',[error.message]);}
+ if(typeof copy.headlineText==='string'&&copy.headlineText.trim())changed.headlineText=copy.headlineText.trim();
+ return changed;
+}
+
+export async function finalizeEpisode(initial,source,{requestedTopic=source.title,onStage=async()=>{},debugFolder,hookContext=null,seconds=null,reviewPrefix=''}={}){
  const result=await repairReviewed(initial,{
   attempts:3,
   validate:episode=>{
@@ -608,11 +624,11 @@ export async function finalizeEpisode(initial,source,{requestedTopic=source.titl
    review.spokenClaimChallenge=challenge;
    return {review,issues};
   },
-  repair:async(episode,issues,attempt)=>{
+  repair:async(episode,issues,attempt,previousIssues=[])=>{
    await onStage('Automatically repairing hook, facts and dialogue');
-   const fixed=await gemini(`AUTOMATIC EDITORIAL REPAIR. ${hookStyleDirection(hookContext,episode.language)} ${seconds?`Retain at least ${Math.ceil(Math.max(25,seconds)*3.2)} spoken words total. REQUIRED: a concrete curiosity hook in the first 6-10 words, followed by a playful comparison in the opening shot and an earned comic callback in the final sentence. Preserve these through factual corrections.`:""} ${hookContext?`Start with a short topic-linked curiosity question or surprising contradiction BEFORE any long comparison. Keep the opening fresh; preferred family: ${hookContext.style}. Do not repeat these recent openings: ${JSON.stringify(hookContext.recent)}.`:""} Keep narration free of labels, emoji and acting directions. ${!source.articles?"Keep ONE narrow question across all three claims; replace unrelated tangents with distinct sourced details answering that question. Do not introduce new species, historical inventions or financial facts as filler. Use common concrete visible subjects in context footage for invisible/slow processes.":""} Preserve the short topic-specific hook, conversational energy and earned final punchline. Correct the specific rejected issues in this source-backed storyboard. If SOURCE contains three numbered articles, preserve exactly one factual claim per article in that order; never collapse random facts into one subject. No external assumptions or added facts. Do not copy reviewer prose, English parentheticals or source labels into narration. Correct grammar and spelling in the requested language in every changed sentence; ${episode.language==='hi'?'keep natural spoken Hindi and correct matras':'keep fluent conversational English with no Hindi text'}. Return the WHOLE corrected episode JSON with EXACTLY ${episode.scenes.length} scenes, one for each input index 0 through ${episode.scenes.length-1}, no omitted, split, merged or extra shots. Preserve each input factIndex. Keep exactly three sourced facts, all captions/narration in ${episode.language==='hi'?'natural spoken desi Hindi Devanagari':'English'}. Preserve source qualifiers. Replace an unsupported WHY-origin hook with a concrete WHAT/use question answered in the video. Replace confusing scientific names/transliterations with a short plain-language explanation; do not invent a spelling. Keep the topic ${JSON.stringify(requestedTopic)}, source-supported humor, same scene order/factIndex and any useful real-media directions. You may correct subjectEntity, visualQuery, videoQuery and visualRole if they refer to a wrong entity or impossible evidence. Use ordinary relevant photos/footage as context instead of demanding hidden anatomy; at most one justified diagram with reason. Headline must be short, readable and not sensationalize danger. ${episode.language==='hi'?hindiDialogueDirection(episode.humorIntensity):englishDialogueDirection()}\nISSUES:${JSON.stringify(issues)}\nSOURCE:${String(source.extract||'').slice(0,12000)}\nEPISODE:${JSON.stringify(episode)}`,null,{review:true});
+   const fixed=await gemini(`AUTOMATIC EDITORIAL REPAIR. ${hookStyleDirection(hookContext,episode.language)} ${seconds?`Retain at least ${Math.ceil(Math.max(25,seconds)*3.2)} spoken words total. REQUIRED: a concrete curiosity hook in the first 6-10 words, followed by a playful comparison in the opening shot and an earned comic callback in the final sentence. Preserve these through factual corrections.`:""} ${hookContext?`Start with a short topic-linked curiosity question or surprising contradiction BEFORE any long comparison. Keep the opening fresh; preferred family: ${hookContext.style}. Do not repeat these recent openings: ${JSON.stringify(hookContext.recent)}.`:""} Keep narration free of labels, emoji and acting directions. ${!source.articles?"Keep ONE narrow question across all three claims; replace unrelated tangents with distinct sourced details answering that question. Do not introduce new species, historical inventions or financial facts as filler. Use common concrete visible subjects in context footage for invisible/slow processes.":""} Preserve the short topic-specific hook, conversational energy and earned final punchline. Correct the specific rejected issues in this source-backed storyboard. If SOURCE contains three numbered articles, preserve exactly one factual claim per article in that order; never collapse random facts into one subject. No external assumptions or added facts. Do not copy reviewer prose, English parentheticals or source labels into narration. Correct grammar and spelling in the requested language in every changed sentence; ${episode.language==='hi'?'keep natural spoken Hindi and correct matras':'keep fluent conversational English with no Hindi text'}. TEXT-ONLY REPAIR: preserve already-correct sentences verbatim. Change only strings necessary to resolve the listed issues. Do not rewrite all scenes to fix a hook, punchline, title or one Hindi word. Return JSON {"facts":["claim 1","claim 2","claim 3"],"headlineText":"short headline","scenes":[{"narration":"full corrected narration","line1":"caption","line2":"caption","beatTextHi":"","callout":"","pointOutLabel":""}]}. EXACTLY ${episode.scenes.length} scenes, one for each input index 0 through ${episode.scenes.length-1}; include unchanged shots verbatim. No omitted, split, merged or extra shots. Do not return or change factIndex, visual, media queries, pointers or diagram structure. For an existing diagram, return diagram text only with the SAME nodes/links lengths. Keep exactly three sourced facts, all captions/narration in ${episode.language==='hi'?'natural spoken desi Hindi Devanagari':'English'}. Preserve source qualifiers. Replace an unsupported WHY-origin hook with a concrete WHAT/use question answered in the video. Replace confusing scientific names/transliterations with a short plain-language explanation; do not invent a spelling. Keep the topic ${JSON.stringify(requestedTopic)}, source-supported humor, same scene order/factIndex and any useful real-media directions. Keep media structure untouched; media acquisition has a separate source-backed brief repair. Use ordinary relevant photos/footage as context instead of demanding hidden anatomy; at most one justified diagram with reason. Headline must be short, readable and not sensationalize danger. ${episode.language==='hi'?hindiDialogueDirection(episode.humorIntensity):englishDialogueDirection()}\nCURRENT ISSUES:${JSON.stringify(issues)}\nEARLIER REVIEW ISSUES - DO NOT REINTRODUCE:${JSON.stringify(previousIssues)}\nSOURCE:${String(source.extract||'').slice(0,12000)}\nEPISODE:${JSON.stringify(episode)}`,null,{review:true});
    const repaired=Array.isArray(fixed?.scenes)?fixed:[fixed?.episode,fixed?.storyboard,fixed?.video].find(x=>Array.isArray(x?.scenes))||fixed;
-   const changed=groupFactScenes(normalizeEpisode(repaired));
+   const changed=applyEditorialTextRepair(episode,repaired);
    if(changed.scenes.length!==episode.scenes.length)throw new QualityError('Repair changed shot count',issues);
    changed.language=episode.language;changed.humorIntensity=episode.humorIntensity;
    if(changed.language==='hi'&&changed.facts.some(f=>!/[\u0900-\u097F]/u.test(f))){
@@ -624,11 +640,11 @@ export async function finalizeEpisode(initial,source,{requestedTopic=source.titl
    if(unsupportedDrama(changed.headlineText,source))return polishEpisodeHeadline(changed,source,changed.language);
    try{layoutHeadline(changed.headlineText,{compact:true});}catch{return polishEpisodeHeadline(changed,source,changed.language);}
    changed.headlineHighlight=changed.headlineText.split(/\s+/).slice(0,2).join(' ');
-   if(debugFolder)await writeFile(`${debugFolder}/auto-repair-${attempt}.json`,JSON.stringify(changed,null,2));
+   if(debugFolder)await writeFile(`${debugFolder}/${reviewPrefix}auto-repair-${attempt}.json`,JSON.stringify(changed,null,2));
    return changed;
   },
   onReview:async(review,episode,attempt)=>{
-   if(debugFolder)await writeFile(`${debugFolder}/editorial-review-${attempt}.json`,JSON.stringify({approved:!review.issues.length,...review},null,2));
+   if(debugFolder)await writeFile(`${debugFolder}/${reviewPrefix}editorial-review-${attempt}.json`,JSON.stringify({approved:!review.issues.length,...review},null,2));
   }
  });
  if(debugFolder)await writeFile(`${debugFolder}/editorial-review.json`,JSON.stringify({approved:true,repairs:result.repairs,review:result.review},null,2));
