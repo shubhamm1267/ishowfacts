@@ -4,11 +4,25 @@ import { normalizeEpisode, validateThreeFacts, licenseInfo, isFreesoundCC0, buil
   semanticEffectAllowed, normalizeDiagram, resolveVoiceProfile, speechPerformance,
   mediaTitleMismatch, randomFactsSource, runWithProviders, wikipediaSource,
   chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES } from '../lib/core.mjs';
-import { validateInput,VIDEO_TTL_MS,expireJob } from '../server.mjs';
+import { validateInput,VIDEO_TTL_MS,expireJob,normalizeFrontendOrigin,makeServer } from '../server.mjs';
 import {mkdir,writeFile,stat} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+
+test('deployment origin normalization tolerates copied quotes and trailing slashes without allowing other sites',async()=>{
+ assert.equal(normalizeFrontendOrigin(' "https://facts-example.netlify.app/" '),'https://facts-example.netlify.app');
+ for(const invalid of ['*','null','not-a-url','https://user:password@example.com','file:///tmp'])assert.equal(normalizeFrontendOrigin(invalid),null);
+ const server=makeServer({frontendOrigin:' "https://facts-example.netlify.app/" '});
+ await new Promise(ok=>server.listen(0,'127.0.0.1',ok));
+ const base='http://127.0.0.1:'+server.address().port;
+ try{
+  const good=await fetch(base+'/api/health',{headers:{Origin:'https://facts-example.netlify.app'}});
+  assert.equal(good.status,200);assert.equal(good.headers.get('access-control-allow-origin'),'https://facts-example.netlify.app');
+  const bad=await fetch(base+'/api/health',{headers:{Origin:'https://facts-example.netlify.app.attacker.example'}});
+  assert.equal(bad.status,403);assert.equal(bad.headers.get('access-control-allow-origin'),null);
+ }finally{await new Promise(ok=>server.close(ok));}
+});
 
 test('random fact mode is explicit and unknown modes retain topic research',()=>{
  const providerKeys={GEMINI_API_KEY:'test',CARTESIA_API_KEY:'test'};

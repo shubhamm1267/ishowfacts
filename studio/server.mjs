@@ -80,6 +80,15 @@ const PORT = Number(process.env.PORT || 4300);
 const ALLOWED_ORIGIN =
   process.env.FRONTEND_ORIGIN || 'http://localhost:4200';
 
+export function normalizeFrontendOrigin(value) {
+  const input=String(value||'').trim().replace(/^(["'])(.*)\1$/, '$2').trim();
+  try {
+    const url=new URL(input);
+    if(!['https:','http:'].includes(url.protocol)||url.username||url.password)return null;
+    return url.origin;
+  } catch { return null; }
+}
+
 // Only one video is generated at a time.
 let busy = false;
 let activeJob = null;
@@ -2034,13 +2043,13 @@ async function serveAngular(
   }
 }
 
-export function makeServer() {
+export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
   return createServer(
     async (req, res) => {
       const origin = req.headers.origin;
 
       const allowedOrigins = new Set([
-        ALLOWED_ORIGIN,
+        normalizeFrontendOrigin(frontendOrigin),
         'http://localhost:4200',
         'http://127.0.0.1:4200',
         `http://127.0.0.1:${PORT}`,
