@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {editorialIssues,shotReview,renderedIssues,narrationIssues,repairReviewed,QualityError,narrationTempo} from '../lib/quality.mjs';
-import {verificationGemini,runWithProviders,finalizeEpisode,repairMediaBrief,applyEditorialTextRepair} from '../lib/core.mjs';
+import {verificationGemini,runWithProviders,finalizeEpisode,repairMediaBrief,applyEditorialTextRepair,applyComedyEdges,repairComedyEdges} from '../lib/core.mjs';
 import {framingReviewer} from '../lib/visual-quality.mjs';
 import {mkdtemp,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -9,6 +9,36 @@ import {tmpdir} from 'node:os';
 
 const source={extract:'The animal is the tallest living terrestrial animal. Its diet includes leaves. Males engage in necking.'};
 const episode={scenes:[{},{}]};
+
+test('comedy repair changes only opening and ending narration, preserving approved structure',()=>{
+ const original={facts:['a','b','c'],scenes:[{narration:'first',factIndex:0,videoQuery:'original'},{narration:'middle',factIndex:1},{narration:'last',factIndex:2,duration:5}]};
+ const changed=applyComedyEdges(original,{opening:'new first',ending:'new last',facts:['wrong']});
+ assert.equal(changed.scenes[0].narration,'new first');assert.equal(changed.scenes[2].narration,'new last');
+ assert.deepEqual(changed.scenes[1],original.scenes[1]);assert.deepEqual(changed.facts,original.facts);
+ assert.equal(changed.scenes[0].videoQuery,'original');assert.equal(changed.scenes[2].duration,5);
+ assert.equal(original.scenes[0].narration,'first');
+ assert.throws(()=>applyComedyEdges(original,{opening:'missing ending'}),/Incomplete/);
+});
+
+test('targeted comedy proposals use all three key slots and reject unfaithful or unapproved choices',async()=>{
+ const saved=globalThis.fetch,slots=[];let faithful=true;
+ const original={language:'en',scenes:[{narration:'first'},{narration:'middle'},{narration:'last'}]};
+ try{
+  globalThis.fetch=async(url,options)=>{
+   const prompt=JSON.parse(options.body).contents[0].parts[0].text;
+   let answer;
+   if(prompt.startsWith('TARGETED COMEDY EDGE REPAIR')){
+    const key=options.headers['x-goog-api-key'];slots.push(key);answer={opening:'Opening '+key,ending:'Ending '+key};
+   }else{assert.match(prompt,/SELECT COMEDY REPAIR/);answer={index:1,comedyHook:true,comicEnding:true,faithful,natural:true};}
+   return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer)}]}}]});
+  };
+  const keys={GEMINI_API_KEY:'one',GEMINI_API_KEY_2:'two',GEMINI_API_KEY_3:'three'};
+  const changed=await runWithProviders(keys,()=>repairComedyEdges(original,{extract:'Source facts'}));
+  assert.equal(new Set(slots).size,3);assert.equal(changed.scenes[1].narration,'middle');
+  faithful=false;
+  assert.equal(await runWithProviders(keys,()=>repairComedyEdges(original,{extract:'Source facts'})),null);
+ }finally{globalThis.fetch=saved;}
+});
 
 test('editorial text repair preserves shot identity, media and timing while accepting text-only responses',()=>{
  const story={headlineText:'Old hook',language:'hi',facts:['one','two','three'],scenes:[{factIndex:0,narration:'old',visual:'video',videoQuery:'original animal',duration:5,pointOut:{target:'animal',label:'old'}}]};
@@ -270,6 +300,25 @@ test('local validation failures use bounded repair and still require a fresh rev
  let repairs=0,reviews=0;
  const result=await repairReviewed({valid:false},{validate:e=>{if(!e.valid)throw new QualityError('Invalid',['Fix hook']);},repair:async(e,issues)=>{repairs++;assert.deepEqual(issues,['Fix hook']);return{valid:true};},review:async()=>{reviews++;return{review:{approved:true},issues:[]};}});
  assert.equal(repairs,1);assert.equal(reviews,1);assert.equal(result.episode.valid,true);
+});
+
+test('comedy-only rejection repairs edge shots and reruns factual review without a full storyboard rewrite',async()=>{
+ const saved=globalThis.fetch;let reviews=0,claims=0,proposals=0;
+ const story={language:'en',headlineText:'Animal mystery',facts:approved().facts.map(f=>f.sourceQuote),scenes:[0,1,2].map(factIndex=>({factIndex,visual:'photo',narration:('Why does this animal have these traits? '+source.extract+' ').repeat(2),line1:'Animal',line2:'Traits',visualQuery:'animal leaves'}))};
+ try{
+  globalThis.fetch=async(url,init)=>{
+   const prompt=JSON.parse(init.body).contents[0].parts[0].text;let answer;
+   if(prompt.startsWith('SPOKEN CLAIM CHALLENGE')){claims++;answer={approved:true,issues:[]};}
+   else if(prompt.startsWith('TARGETED COMEDY EDGE REPAIR')){proposals++;answer={opening:story.scenes[0].narration+' Like a walking ladder!',ending:story.scenes[2].narration+' The ladder wins again!'};}
+   else if(prompt.startsWith('SELECT COMEDY REPAIR'))answer={index:0,comedyHook:true,comicEnding:true,faithful:true,natural:true};
+   else if(prompt.startsWith('AUTOMATIC EDITORIAL REPAIR'))assert.fail('Comedy-only repairs must not rewrite the full storyboard');
+   else{reviews++;answer=approved();answer.comedyHook=reviews>1;answer.comicEnding=reviews>1;answer.scenes=story.scenes.map((_,index)=>({index,relevant:true,faithful:true,natural:true,confidence:.95,sourceQuote:answer.facts[index].sourceQuote}));}
+   return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer)}]}}]});
+  };
+  const result=await runWithProviders({GEMINI_API_KEY:'one',GEMINI_API_KEY_2:'two',GEMINI_API_KEY_3:'three'},()=>finalizeEpisode(story,source,{seconds:30}));
+  assert.equal(proposals,3);assert.equal(reviews,2);assert.equal(claims,2);
+  assert.deepEqual(result.scenes[1],story.scenes[1]);assert.deepEqual(result.facts,story.facts);
+ }finally{globalThis.fetch=saved;}
 });
 
 test('missing comedy fields receive a focused review rather than rewriting an approved story',async()=>{
