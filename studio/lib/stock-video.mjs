@@ -1,10 +1,12 @@
-import { copyFile, mkdir, readdir, rename, rm, stat,writeFile } from 'node:fs/promises';
+import {metadataScore} from './local-visual-quality.mjs';
+import { copyFile, mkdir, readdir, readFile, rename, rm, stat,writeFile } from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
 import {join,dirname} from 'node:path';
 import {Readable,Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import { providerValue,licenseInfo,mediaTitleMismatch,generationFetch,checkGenerationCancelled } from './core.mjs';
+import {matchingInstagramRows,discoverInstagram} from './instagram-video.mjs';
 import {imageDimensions,highQualityImage,readImageBytes} from './image-quality.mjs';
 
 const MAX = () => Math.min(120, Math.max(5, Number(process.env.STOCK_VIDEO_MAX_MB) || 80)) * 1024 * 1024;
@@ -105,6 +107,28 @@ function vecteezySearch(query,session){
  Object.entries({term:normalizedQuery(query),content_type:'video',license_type:'commercial',ai_generated:'false',per_page:'12'}).forEach(([k,v])=>url.searchParams.set(k,v));
  return providerSearch(session,'vecteezy:'+scope(),scope()+':'+url,async()=>(await request(url,{Authorization:`Bearer ${key}`})).json());
 }
+// Metadata-only feasibility screen for automatic topics; this does not approve
+// identity, rights or pixels and never downloads footage before user approval.
+export async function topicFootageAvailability(topic,{session=createStockSession(),discover=discoverInstagram}={}){
+ const reports=[];let index=[];
+ try{index=JSON.parse(await readFile(new URL('../data/instagram-footage.json',import.meta.url),'utf8'));}catch{}
+ const indexed=matchingInstagramRows(index,topic);
+ if(indexed.length)return {available:true,provider:'Instagram index',candidates:indexed,metadataOnly:true};
+ try{
+  const candidates=await discover(topic,{signal:AbortSignal.timeout(5000)});
+  reports.push({provider:'Instagram discovery',results:candidates.length});
+  if(candidates.length)return {available:true,provider:'Instagram discovery',candidates,metadataOnly:true};
+ }catch(error){checkGenerationCancelled();reports.push({provider:'Instagram discovery',unavailable:true});}
+ const terms=(String(topic).toLowerCase().match(/[a-z]{3,}/g)||[]).filter(w=>!['the','and','for'].includes(w));
+ const match=title=>terms.length&&terms.every(w=>String(title||'').toLowerCase().includes(w.replace(/s$/,'')))&&!syntheticStock(title)&&!mediaTitleMismatch(title,topic);
+ const operations=[];
+ if(providerValue('VECTEEZY_API_KEY'))operations.push((async()=>{try{const d=await vecteezySearch(topic,session);return {provider:'Vecteezy',returned:(d?.resources||[]).length,results:(d?.resources||[]).filter(r=>r.content_type==='video'&&match(r.title)&&stockFile(r.file_metadata?.available_file_types||[])).length};}catch{checkGenerationCancelled();return {provider:'Vecteezy',unavailable:true};}})());
+ if(providerValue('PEXELS_API_KEY'))operations.push((async()=>{try{const u=new URL('https://api.pexels.com/v1/videos/search');u.searchParams.set('query',topic);u.searchParams.set('per_page','12');const d=await(await request(u,{Authorization:providerValue('PEXELS_API_KEY')},6000)).json();return {provider:'Pexels',returned:(d.videos||[]).length,results:(d.videos||[]).filter(r=>match(r.url?.replaceAll('-',' '))&&(r.video_files||[]).some(f=>Math.min(f.width||0,f.height||0)>=1080)).length};}catch{checkGenerationCancelled();return {provider:'Pexels',unavailable:true};}})());
+ reports.push(...await Promise.all(operations));
+ // A provider outage is uncertainty, never evidence that a subject has no footage.
+ return {available:reports.some(r=>r.results>0)?true:!operations.length||reports.some(r=>r.unavailable||r.returned>0)?null:false,reports,metadataOnly:true,candidates:[]};
+}
+
 export async function prefetchStockVideo(query,{session}){
  try{
   const result=await vecteezySearch(query,session);
@@ -186,7 +210,7 @@ export function vecteezyFree(html) {
 
 // Documentary stock must be real footage, not a cartoon tagged "not AI".
 export function syntheticStock(title=''){
- return /\b(?:cartoon|animat(?:ed|ion)|illustrat(?:ed|ion)|3d|cgi|render(?:ed|ing)?|motion graphics?|seamless loop|alpha channel|transparent background|striped background|abstract|gradient background|background pattern|geometric pattern)\b/i.test(title);
+ return /\b(?:green[ -]?screen|blue[ -]?screen|chroma[ -]?key|placeholder|mock[ -]?up|cartoon|animat(?:ed|ion)|illustrat(?:ed|ion)|3d|cgi|render(?:ed|ing)?|motion graphics?|seamless loop|alpha channel|transparent background|striped background|abstract|gradient background|background pattern|geometric pattern)\b/i.test(title);
 }
 
 export async function stockPhoto(query,dest,{used=new Set(),session=createStockSession()}={}){
@@ -203,7 +227,7 @@ export async function stockPhoto(query,dest,{used=new Set(),session=createStockS
  let attempts=0,failure;
  for(const photo of data.photos||[]){
   const id='pexels-photo:'+photo.id;
-  if(used.has(id)||!photo.url||syntheticStock(photo.alt)||!highQualityImage(photo))continue;
+  if(used.has(id)||!photo.url||syntheticStock(photo.alt)||mediaTitleMismatch(photo.alt,query)||!highQualityImage(photo))continue;
   // large2x retains HD detail without decoding an unbounded camera original.
   let address;try{address=new URL(photo.src?.large2x);}catch{continue;}
   if(address.protocol!=='https:'||address.hostname!=='images.pexels.com'||address.username||address.password)continue;
@@ -240,12 +264,9 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
    try{if(await session.cache?.get(cacheKey(id),dest)){session.metrics.cacheHits++;return true;}}catch{/* Cache loss never blocks a licensed download. */}
    return false;
   }
-  const words=text=>(String(text).toLowerCase().match(/[a-z]{3,}/g)||[]).filter(w=>!['the','and','for','with','from','how','why'].includes(w));
-  const forms=word=>[word,word.replace(/s$/,''),word.replace(/es$/,'')];
-  const subjectWords=words(subject);
   // Cheap ranking saves downloads of popular but unrelated results. Actual
   // frame inspection remains mandatory; a title is not proof of relevance.
-  const relevance=title=>subjectWords.filter(w=>words(title).some(t=>forms(w).some(f=>forms(t).includes(f)))).length;
+  const relevance=title=>metadataScore(title,subject||query);
   const candidates = [];
   const failures=[];
   const searches=session.metrics.searches.slice(searchStart);
@@ -265,7 +286,7 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
       const ranked=(data.resources||[]).map((item,index)=>({item,index,score:relevance(item.title)}))
         .sort((a,b)=>b.score-a.score||a.index-b.index);
       for (const {item} of ranked) {
-        if (item.content_type !== 'video' || used.has(`vecteezy:${item.id}`) || syntheticStock(item.title)) continue;
+        if (item.content_type !== 'video' || used.has(`vecteezy:${item.id}`) || syntheticStock(item.title) || mediaTitleMismatch(item.title,subject||query)) continue;
         const files = item.file_metadata?.available_file_types || [];
         const file = stockFile(files);
         if (!file) continue; // Never acquire a multi-GB source/unknown-size file.
@@ -366,11 +387,13 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
     const data=await providerSearch(session,provider+':'+digest(apiKey),provider+':'+digest(apiKey)+':'+url,async()=>(await request(url,headers)).json());
     const rows=(provider==='pexels'?data.videos:data.hits)||[];
     currentSearch.results=rows.length;currentSearch.status='searched';
+    const stockTitle=row=>{try{return provider==='pexels'?new URL(row.url).pathname.split('/').filter(Boolean).at(-1).replace(/-\d+$/,'').replaceAll('-',' '):row.title||'';}catch{return '';}};
+    rows.sort((a,b)=>relevance(stockTitle(b))-relevance(stockTitle(a)));
     for(const row of rows){
      const id=provider+':'+row.id;
      if(used.has(id)||row.is_ai_generated===true||row.is_premium===true||row.sponsored===true)continue;
-     const title=provider==='pexels'?new URL(row.url).pathname.split('/').filter(Boolean).at(-1).replace(/-\d+$/,'').replaceAll('-',' '):row.title;
-     if(syntheticStock(title))continue;
+     const title=stockTitle(row);
+     if(syntheticStock(title)||mediaTitleMismatch(title,subject||query))continue;
      const file=provider==='pexels'?(row.video_files||[]).filter(f=>f.file_type==='video/mp4'&&Math.min(f.width||0,f.height||0)>=1080).sort((a,b)=>a.width*a.height-b.width*b.height)[0]:null;
      const link=provider==='pexels'?file?.link:Math.min(row.max_width||0,row.max_height||0)>=1080?row.urls?.mp4_download:null;
      if(!link)continue;

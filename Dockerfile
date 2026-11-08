@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
     python3-venv \
     ffmpeg \
     fonts-dejavu-core \
+    tesseract-ocr \
+    tesseract-ocr-hin \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 

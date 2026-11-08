@@ -16,14 +16,14 @@ import {
 import { createReadStream,readFileSync } from 'node:fs';
 import {totalmem} from 'node:os';
 import { spawn } from 'node:child_process';
-import { stockVideo,stockPhoto,createStockSession,createStockMediaCache,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
+import { stockVideo,stockPhoto,createStockSession,createStockMediaCache,topicFootageAvailability,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
 import {createInstagramProvider} from './lib/instagram-video.mjs';
 import { preparePointerAssets, prepareHeadlineAssets, prepareOverlayTextAssets, normalizeHookTitle } from './lib/reference-style.mjs';
 import { prepareExplainers } from './lib/explainer.mjs';
 import {heygenVoice,heygenPerformance,NATURAL_SPEECH_TRIM,DEFAULT_HEYGEN_VOICE,HEYGEN_FREE_MODEL,heygenModel,heygenSpeechMode,validateHeygenSettings} from './lib/heygen.mjs';
 import {recordStage,timingSummary} from './lib/job-timing.mjs';
 import {runSceneWorkers,mediaBudget,assignMediaTypes,mediaBudgetIssues,createProcessLimiter,resourceBudget} from './lib/media-workers.mjs';
-import {framingReviewer,reviewRenderedVideo} from './lib/visual-quality.mjs';
+import {framingReviewer,reviewRenderedVideo} from './lib/local-visual-quality.mjs';
 import {QualityError,narrationTempo} from './lib/quality.mjs';
 import {hookContextFor,hookFamily} from './lib/episode-prompt.mjs';
 
@@ -34,6 +34,8 @@ import {
   randomFactsSource,
   wikipediaSource,
   writeEpisode,
+  writeStoryOptions,
+  finalizeEpisode,
   prepareMediaContracts,
   commonsImage,
   openverseImage,
@@ -42,18 +44,14 @@ import {
   fishVoice, fishVoiceId, FISH_FREE_MODEL, validateFishSettings,
   demoEpisode,
   clamp,
-  inspectImage,
-  inspectFocus,
-  inspectVideoFrames,
   auditHindiNarration,
   auditSoundCue,
   gemini,
-  auditCutout,
   mediaSearchQueries,
   mediaVideoQuery,
   repairMediaBrief,
   resolveVoiceProfile,
-  runWithProviders, generationSignal, checkGenerationCancelled
+  runWithProviders, runWithGeminiUsage, generationSignal, checkGenerationCancelled
 } from './lib/core.mjs';
 
 import {
@@ -214,6 +212,11 @@ function safeJob(job) {
     category:job.category||null,
     size: job.size || [1080,1920],
     performance:timingSummary(job)||job.performance||null,
+    storyPreparationSeconds:job.storyPreparationSeconds||null,
+    preview:job.preview||null,
+    storyOptions:job.storyOptions||null,
+    previewNotice:job.previewNotice||null,
+    geminiUsage:job.geminiUsage||null,
     uploadTitleUrl: status === 'complete' ? `/api/jobs/${id}/title` : null,
     uploadDescriptionUrl: status === 'complete' ? `/api/jobs/${id}/description` : null,
     stage,
@@ -257,10 +260,11 @@ async function checkpoint(job, stage, progress) {
   job.progress = progress;
   if(process.env.RENDER)console.log('[MEMORY]',JSON.stringify({job:job.id,stage,nodeMiB:Math.round(process.memoryUsage().rss/1048576),containerMiB:Math.round((memoryNumber('/sys/fs/cgroup/memory.current')||memoryNumber('/sys/fs/cgroup/memory/memory.usage_in_bytes'))/1048576),limitMiB:Math.round(memoryLimit/1048576)}));
 
-  await writeFile(
-    join(JOBS, job.id, 'status.json'),
-    JSON.stringify(safeJob(job), null, 2)
-  );
+  const pending=join(JOBS,job.id,`status-${randomUUID()}.tmp`);
+  try{
+    await writeFile(pending,JSON.stringify(safeJob(job),null,2));
+    await rename(pending,join(JOBS,job.id,'status.json'));
+  }finally{await rm(pending,{force:true});}
 }
 
 export function validateInput(data) {
@@ -398,6 +402,7 @@ export function validateInput(data) {
   return {
     topic,
     recentTopics:[...new Set(recentTopics.map(t=>t.trim()))],
+    previewFirst:data.previewFirst===true,
     language,
     factMode:data.factMode==='random'?'random':'topic',
     seconds,
@@ -780,106 +785,7 @@ async function tryCutout(
       )
     );
 
-    if (process.env.GEMINI_CUTOUT_QA !== '0') {
-      try {
-        const check = await auditCutout(
-          img,
-          dest,
-          guidance?.subject || 'main subject'
-        );
-
-        if (
-          !check.usable &&
-          check.confidence >= .7
-        ) {
-          if (
-            /edge|halo|outline|fring|border/i.test(
-              check.reason || ''
-            ) &&
-            !/missing|cut.off|erased|lost (?:a |the )?(?:tail|leg|fin|wing)/i.test(
-              check.reason || ''
-            )
-          ) {
-            const tightened = dest.replace(
-              /\.png$/,
-              '_tight.png'
-            );
-
-            const secondArgs = [
-              join(DIR, 'prepare_cutout.py'),
-              img,
-              tightened
-            ];
-
-            const oldSpec = dest.replace(
-              /\.png$/,
-              '.anchors.json'
-            );
-
-            if (guidance?.anchors) {
-              secondArgs.push(oldSpec);
-            }
-
-            secondArgs.push('--edge-trim=2');
-
-            try {
-              await processTool(
-                process.env.PYTHON || 'python3',
-                secondArgs
-              );
-
-              const review = await auditCutout(
-                img,
-                tightened,
-                guidance?.subject || 'main subject'
-              );
-
-              if (
-                review.usable ||
-                review.confidence < .7
-              ) {
-                const good = JSON.parse(
-                  await readFile(
-                    tightened.replace(
-                      /\.png$/,
-                      '.bbox.json'
-                    ),
-                    'utf8'
-                  )
-                );
-
-                await copyFile(
-                  tightened,
-                  dest
-                );
-
-                await copyFile(
-                  tightened.replace(
-                    /\.png$/,
-                    '.bbox.json'
-                  ),
-                  dest.replace(
-                    /\.png$/,
-                    '.bbox.json'
-                  )
-                );
-
-                return good;
-              }
-            } catch {
-              // Preserve original rejection.
-            }
-          }
-
-          return {
-            rejected:
-              check.reason || 'incomplete cutout'
-          };
-        }
-      } catch {
-        // Continue using segmentation mask QA.
-      }
-    }
+    // Segmentation's own mask/bounding-box checks remain; no Gemini cutout QA.
 
     return metadata;
   } catch {
@@ -897,7 +803,15 @@ async function makeDemoArt(path) {
   );
 }
 
-async function runJob(job, input) {
+function previewEpisode(episode,topic,index=0){
+  return {index,title:normalizeHookTitle(episode.headlineText||episode.title),headline:episode.headlineText||episode.title,topic,
+    hook:episode.scenes[0].narration,narration:episode.scenes.map(scene=>scene.narration).join('\n\n')};
+}
+function spokenPreview(episode){
+  return JSON.stringify({headline:episode.headlineText,facts:episode.facts,scenes:episode.scenes.map(({narration,line1,line2})=>({narration,line1,line2}))});
+}
+
+async function runJob(job, input, approved = null) {
   const folder = join(JOBS, job.id);
   const assets = join(folder, 'assets');
 
@@ -908,11 +822,40 @@ async function runJob(job, input) {
       recursive: true
     });
     let preparedLogo='';
-    if(input.logoDataUrl){
-      const logoSource=join(assets,'uploaded-logo');preparedLogo=join(assets,'logo.png');
-      await writeFile(logoSource,Buffer.from(input.logoDataUrl.split(',')[1],'base64'));
-      await processTool(process.env.PYTHON||'python3',['scripts/prepare_logo.py',logoSource,preparedLogo]);
-    }
+    let topic, source, episode;
+    const strictMedia=!input.demo&&input.visualStyle==='reference-news'&&input.mediaMode==='mixed' ?mediaBudget(input.seconds):null;
+    if (approved) {
+      ({topic,source,episode}=approved);
+      if(approved.storySnapshot){
+        const snapshot=approved.storySnapshot,option=snapshot.options[approved.optionIndex];
+        if(!option.reviewed){
+          const before=spokenPreview(episode);
+          episode=await finalizeEpisode(episode,source,{requestedTopic:topic,seconds:input.seconds,hookContext:snapshot.hookContext,
+            debugFolder:folder,reviewPrefix:`option-${approved.optionIndex}-`,onStage:stage=>checkpoint(job,stage,20)});
+          if(input.visualStyle==='reference-news'){
+            const contracts=await prepareMediaContracts(episode,source);
+            await writeFile(join(folder,'media-contracts.json'),JSON.stringify(contracts,null,2));
+          }
+          if(strictMedia)assignMediaTypes(episode,strictMedia);
+          option.episode=episode;option.reviewed=true;
+          await writeFile(join(folder,'approved-story.json'),JSON.stringify(snapshot));
+          job.storyOptions=snapshot.options.map((o,index)=>({...previewEpisode(o.episode,topic,index),reviewed:!!o.reviewed}));
+          if(before!==spokenPreview(episode)){
+            job.preview=previewEpisode(episode,topic,approved.optionIndex);
+            job.previewNotice='Facts or language needed corrections. Read the updated script and approve it again before voiceover starts.';
+            job.status='awaiting_approval';
+            job.storyPreparationSeconds=(job.storyPreparationSeconds||0)+(timingSummary(job)?.elapsedSeconds||0);
+            job._timing=undefined;
+            await checkpoint(job,'Corrected script ready for your approval',24);return;
+          }
+        }
+        job.preview=previewEpisode(episode,topic,approved.optionIndex);job.previewNotice=null;job.title=job.preview.title;
+        let history=[];try{history=JSON.parse(await readFile(join(JOBS,'.hook-history.json'),'utf8'));}catch{}
+        await writeFile(join(JOBS,'.hook-history.json'),JSON.stringify([...history,{opening:episode.scenes[0].narration,style:hookFamily(episode.scenes[0].narration),language:input.language}].slice(-20),null,2));
+        await writeFile(join(folder,'episode.json'),JSON.stringify({...episode,research:source},null,2));
+      }
+    } else {
+
 
     await checkpoint(
       job,
@@ -959,7 +902,7 @@ async function runJob(job, input) {
       await saveTopicHistory([]);
       await checkpoint(job,'Researching selected topics',8);
     };
-    let topic,source;
+
     if(input.demo){topic='Octopus';source={title:'Offline demonstration',url:null};}
     else if(input.factMode==='random'){
       source=await randomFactsSource({history:topicHistory,language:input.language,onTopicsSelected:rememberSelection});
@@ -970,14 +913,21 @@ async function runJob(job, input) {
         const candidate=input.topic||await chooseTopic({history:[...topicHistory,...attemptedTopics],language:input.language});
         if(input.topic&&topicWasUsed(candidate,topicHistory))throw Error('This topic has already been used. Choose a new subject.');
         await rememberSelection([candidate],[category]);
-        const researched=await wikipediaSource(candidate);
+        let availability=null;
+        if(!input.topic&&input.visualStyle==='reference-news'&&input.mediaMode==='mixed'){
+          await checkpoint(job,'Checking topic footage availability',7);
+          availability=await topicFootageAvailability(candidate);
+          await writeFile(join(folder,`topic-footage-${attempt}.json`),JSON.stringify({topic:candidate,...availability},null,2));
+          if(availability.available===false)continue;
+        }
+        const researched={...await wikipediaSource(candidate),...(availability?.candidates?.length?{instagramCandidates:availability.candidates}:{})};
         if(input.topic&&topicWasUsed(researched,topicHistory))throw Error('This topic has already been used. Choose a new subject; changing its title or language does not make it new.');
         if(!topicWasUsed(researched,topicHistory)){
           topic=input.topic||researched.title;
           source={...researched,...(!input.topic?{category:topicSelectionContext(topicHistory).categories[0]}:{})};break;
         }
       }
-      if(!source)throw Error('Automatic topic selection resolved to a recently used source');
+      if(!source)throw Error('Could not select a fresh topic with available footage. Try another story.');
     }
     job.topic=topic;
     job.selectedTopics=[...new Set([...(job.selectedTopics||[]),...(source.articles||[source]).map(article=>article.title)])];
@@ -995,8 +945,7 @@ async function runJob(job, input) {
       15
     );
 
-    const strictMedia=!input.demo&&input.visualStyle==='reference-news'&&input.mediaMode==='mixed'
-      ?mediaBudget(input.seconds):null;
+
     let hookHistory=[];
     if(!input.demo){
       try{const saved=JSON.parse(await readFile(join(JOBS,'.hook-history.json'),'utf8'));if(Array.isArray(saved))hookHistory=saved.filter(r=>typeof r?.opening==='string').slice(-20);}catch{/* First run or deleted history. */}
@@ -1004,7 +953,19 @@ async function runJob(job, input) {
 
     const hookContext=hookContextFor(hookHistory.filter(row=>(row.language||'hi')===input.language));
     if(strictMedia&&process.env.ENABLE_STOCK_VIDEO==='0')throw Error('Enable stock video for video-first generation');
-    const episode = input.demo
+    if(input.previewFirst&&!input.demo){
+      const options=await writeStoryOptions(topic,source,input.language,input.seconds,input.humorIntensity,
+        {debugFolder:folder,onStage:stage=>checkpoint(job,stage,18),mediaPolicy:strictMedia,hookContext});
+      if(strictMedia)for(const option of options)assignMediaTypes(option,strictMedia);
+      const {providerKeys,...savedInput}=input;
+      await writeFile(join(folder,'approved-story.json'),JSON.stringify({input:savedInput,topic,source,hookContext,options:options.map(episode=>({episode,reviewed:false}))}));
+      job.storyOptions=options.map((option,index)=>({...previewEpisode(option,topic,index),reviewed:false}));
+      job.preview=job.storyOptions[0];job.title='Choose one of three scripts';
+      job.previewNotice='These are draft scripts. Only your chosen script is fact-checked and language-reviewed before voiceover.';
+      job.sources=source.articles?.map(article=>({name:article.title,url:article.url}))||(source.url?[{name:source.title,url:source.url}]:[]);
+      job.status='awaiting_approval';await checkpoint(job,'Three scripts ready for your choice',24);return;
+    }
+    episode = input.demo
       ? demoEpisode()
       : await writeEpisode(
           topic,
@@ -1027,7 +988,7 @@ async function runJob(job, input) {
     }
 
     if(strictMedia)assignMediaTypes(episode,strictMedia);
-    const mediaConcurrency=Math.min(resources.mediaConcurrency,strictMedia?3:2);
+
 
     job.title = episode.title;
 
@@ -1052,8 +1013,30 @@ async function runJob(job, input) {
       )
     );
 
+    if (input.previewFirst) {
+      const {providerKeys,...savedInput}=input;
+      await writeFile(join(folder,'approved-story.json'),JSON.stringify({input:savedInput,topic,source,episode}));
+      job.preview={title:normalizeHookTitle(episode.headlineText||episode.title),headline:episode.headlineText||episode.title,topic,narration:episode.scenes.map(scene=>scene.narration).join('\n\n')};
+      job.title=job.preview.title;
+      job.status='awaiting_approval';
+      await checkpoint(job,'Story ready for your approval',24);
+      return;
+    }
+    }
+    if(input.logoDataUrl){
+      const logoSource=join(assets,'uploaded-logo');preparedLogo=join(assets,'logo.png');
+      await writeFile(logoSource,Buffer.from(input.logoDataUrl.split(',')[1],'base64'));
+      await processTool(process.env.PYTHON||'python3',['scripts/prepare_logo.py',logoSource,preparedLogo]);
+    }
+    const mediaConcurrency=Math.min(resources.mediaConcurrency,strictMedia?3:2);
+
     const stockSession=createStockSession({cache:stockMediaCache});
-    const instagram=createInstagramProvider({run:processTool,python:process.env.PYTHON||'python3',root:ROOT});
+    let instagramCatalogue;
+    if(source.instagramCandidates?.length){
+      let index=[];try{index=JSON.parse(await readFile(join(DIR,'data','instagram-footage.json'),'utf8'));}catch{}
+      instagramCatalogue=[...index,...source.instagramCandidates];
+    }
+    const instagram=createInstagramProvider({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,catalogue:instagramCatalogue});
     const mediaLookup=(key,operation)=>stockLookup(stockSession,key,operation);
     // Stock searches begin only after the primary Instagram lookup falls back.
 
@@ -1120,6 +1103,7 @@ async function runJob(job, input) {
     let videoCount = 0, videoReservations = 0, completedMedia = 0;
     const maxVideos = strictMedia?.videos||clamp(Number(process.env.STOCK_VIDEO_MAX_SCENES) || 3, 1, 6);
     const verifyFraming=framingReviewer({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets,fit:input.mediaFit,
+      onWarning:warning=>job.warnings.push(warning),
       onReject:({id,reason})=>{const scene=Number(/^(?:video|photo|still)-(\d+)/.exec(id)?.[1]);if(Number.isFinite(scene))job.warnings.push(`Scene ${scene+1}: visual rejected: ${reason}`);}});
     let visualPass=0;
 
@@ -1164,17 +1148,11 @@ async function runJob(job, input) {
                 await processTool('ffmpeg',['-v','error','-y',...(social?[]:['-stream_loop','-1']),'-i',media.file,
                   ...reviewPoints.flatMap((fraction,index)=>[
                     '-ss',String(narration.timing[i].duration*fraction),'-frames:v','1','-an',
-                    '-vf','scale=1920:1920:force_original_aspect_ratio=decrease',focusImages[index]])]);
-                let framing={};
-                if(input.visualStyle==='reference-news'){
-                  framing=await verifyFraming(focusImages,scene,topic,`video-${i}-${visualPass}-${randomUUID()}`);
-                  if(!framing)return null;
-                }else if(!await inspectVideoFrames(focusImages,scene.subjectEntity||scene.visualQuery,scene.narration,topic))return null;
-                let focus = [];
-                if (scene.pointOut) {
-                  try { focus = await inspectFocus(focusImages, scene.pointOut.target, scene.narration); }
-                  catch { job.warnings.push(`Scene ${i+1}: pointer location unverified; pointer omitted`); }
-                }
+                    '-vf','scale=960:960:force_original_aspect_ratio=decrease',focusImages[index]])]);
+                const framing=await verifyFraming(focusImages,scene,topic,`video-${i}-${visualPass}-${randomUUID()}`,media);
+                if(!framing)return null;
+                const focus=[];
+                if(scene.pointOut)job.warnings.push(`Scene ${i+1}: exact pointer target is not located by local technical checks; pointer omitted`);
                 await processTool('ffmpeg', ['-v', 'error', '-y', ...(social?[]:['-stream_loop','-1']), '-i', media.file,
                   '-t', String(seconds), '-an', '-vf', `fps=${fps},scale=1920:1920:force_original_aspect_ratio=decrease`,
                   '-start_number', '0', join(frames, '%06d.jpg')]);
@@ -1305,44 +1283,12 @@ async function runJob(job, input) {
 
             let guidance = null;
 
-            if (
-              input.visualStyle==='reference-news'||process.env.GEMINI_IMAGE_QA !== '0'
-            ) {
-              try {
-                guidance = input.visualStyle==='reference-news'
-                  ? await verifyFraming([dest],scene,topic,`photo-${i}-${visualPass}-${attempt}`)
-                  : await inspectImage(
-                  dest,
-                  episode.scenes[i].subjectEntity ||
-                    episode.scenes[i].visualQuery,
-                  episode.scenes[i].narration,
-                  episode.scenes[i].effects,
-                  {
-                    visualRole:
-                      episode.scenes[i].visualRole,
-                    topic
-                  }
-                );
-
-                if (
-                  !guidance || (input.visualStyle!=='reference-news'&&(!guidance.matches ||
-                  guidance.confidence < .65))
-                ) {
-                  // Candidate rejected; silently try the next image.
-
-                  continue;
-                }
-              } catch (e) {
-                job.warnings.push(
-                  `Scene ${i + 1}: image inspection unavailable: ${e.message}`
-                );
-
-                if (
-                  input.visualStyle==='reference-news'||process.env.STRICT_IMAGE_QA !== '0'
-                ) {
-                  continue;
-                }
-              }
+            try {
+              guidance=await verifyFraming([dest],scene,topic,`photo-${i}-${visualPass}-${attempt}`,media);
+              if(!guidance)continue;
+            } catch(e) {
+              job.warnings.push(`Scene ${i+1}: local image inspection unavailable: ${e.message}`);
+              continue;
             }
 
             if (
@@ -1417,7 +1363,7 @@ async function runJob(job, input) {
                 if(Math.min(dimensions?.width||0,dimensions?.height||0)<1080)return null;
                 const stillAt=Math.min(1,Number(probe.format?.duration)/2||.5);
                 await processTool('ffmpeg',['-v','error','-y','-ss',String(stillAt),'-i',media.file,'-frames:v','1','-an','-q:v','2',dest]);
-                const framing=await verifyFraming([dest],scene,topic,`still-${i}-${randomUUID()}`);
+                const framing=await verifyFraming([dest],scene,topic,`still-${i}-${randomUUID()}`,media);
                 return framing?{...framing,width:dimensions.width,height:dimensions.height,stillAt}:null;
               }
             });
@@ -1483,10 +1429,8 @@ async function runJob(job, input) {
               }
             }
 
-            if (scene.pointOut && !selected.image.cutout) {
-              try { selected.image.focus = await inspectFocus(selected.image.path, scene.pointOut.target, scene.narration); }
-              catch { job.warnings.push(`Scene ${i+1}: pointer location unverified; pointer omitted`); }
-            }
+            if(scene.pointOut&&!selected.image.cutout)job.warnings.push(`Scene ${i+1}: exact pointer target is not located by local technical checks; pointer omitted`);
+
             images[i] = selected.image;
 
           } else {
@@ -1788,16 +1732,16 @@ async function runJob(job, input) {
     }
 
     if(!input.demo&&input.visualStyle==='reference-news'){
-      await checkpoint(job,'Verifying subjects, framing and titles in the exported video',98);
+      await checkpoint(job,'Checking exported video with local FFmpeg and OpenCV',98);
       if(['hi','en'].includes(input.language)){
         const masteredVoice=join(assets,'exported-narration.wav');
         await processTool('ffmpeg',['-v','error','-y','-i',output,'-vn','-ac','1','-ar','24000',masteredVoice]);
         const review=await auditHindiNarration(masteredVoice,episode,{requireNatural:true});
         await writeFile(join(folder,'final-audio-review.json'),JSON.stringify(review,null,2));
       }
-      const finalReview=await reviewRenderedVideo(plan,episode,{run:processTool,assets});
+      const finalReview=await reviewRenderedVideo(plan,episode,{run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets});
       await writeFile(join(folder,'quality-report.json'),JSON.stringify({
-        approved:finalReview.approved,mediaBudget:strictMedia,editorial:'editorial-review.json',audio:'audio-review.json',
+        approved:finalReview.approved,visualVerification:'local-technical-and-metadata',semanticIdentityChecked:false,mediaBudget:strictMedia,editorial:'editorial-review.json',audio:'audio-review.json',
         visuals:images.map((image,index)=>({index,review:image?.visualReview||null,fit:image?.mediaFit,subjectFocus:image?.subjectFocus})),finalReview
       },null,2));
       if(!finalReview.approved)throw new QualityError('Final video quality review did not pass: '+finalReview.issues.join('; ').slice(0,700),finalReview.issues,finalReview.indices);
@@ -1805,8 +1749,8 @@ async function runJob(job, input) {
 
     // Upload title is generated from the finished episode, independently of
     // the fixed on-video headline, which keeps its existing design.
-    job.youtubeTitle = episode.title;
-    if (!input.demo) {
+    job.youtubeTitle = job.preview?.title || episode.title;
+    if (!input.demo && !job.preview) {
       try {
         const title = await gemini(`Write ONE concise, engaging YouTube Shorts upload title in ${input.language === 'hi' ? 'natural Hindi (Devanagari, a little English is fine)' : 'English'}. Base it ONLY on the actual finished narration below. Curiosity is welcome, but no invented facts, unsupported numbers or fake danger. At most 90 characters, exactly one final emoji from 😲 🤔 🔍 ⚡, no hashtags. Return JSON {"title":"..."}. Narration: ${JSON.stringify(episode.scenes.map(s=>s.narration))}`);
         if(input.language==='en'&&/[\u0900-\u097f]/u.test(title.title||''))throw Error('Upload title must be English');
@@ -2177,7 +2121,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
       );
 
       const jobRoute =
-        /^\/api\/jobs\/([a-f\d-]{36})(?:\/(video|download|credits|episode|plan|contact|title|description|cancel))?$/.exec(
+        /^\/api\/jobs\/([a-f\d-]{36})(?:\/(video|download|credits|episode|plan|contact|title|description|cancel|approve))?$/.exec(
           url.pathname
         );
 
@@ -2227,6 +2171,36 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
             }
           );
 
+        } else if(req.method==='POST'&&jobRoute?.[2]==='approve'){
+          if(busy){sendJSON(res,409,{error:'Another generation is running. Please wait.'});return;}
+          busy=true;let started=false;
+          try{
+            const id=jobRoute[1];
+            let job;
+            try{job=jobs.get(id)||JSON.parse(await readFile(join(JOBS,id,'status.json'),'utf8'));}
+            catch(error){if(error.code==='ENOENT'){sendJSON(res,404,{error:'Story not found or expired'});return;}throw error;}
+            if(!['awaiting_approval','failed'].includes(job.status)||!job.preview||!Number.isFinite(Date.parse(job.expiresAt))||Date.parse(job.expiresAt)<=Date.now()){
+              sendJSON(res,409,{error:'Story is no longer awaiting approval. Generate a fresh story.'});return;
+            }
+            const saved=JSON.parse(await readFile(join(JOBS,id,'approved-story.json'),'utf8'));
+            const body=await jsonBody(req);
+            let selected=saved;
+            if(Array.isArray(saved.options)){
+              if(!Number.isInteger(body.optionIndex)||body.optionIndex<0||body.optionIndex>=saved.options.length){sendJSON(res,400,{error:'Choose one of the displayed scripts.'});return;}
+              selected={...saved,episode:saved.options[body.optionIndex].episode,optionIndex:body.optionIndex,storySnapshot:saved};
+              job.preview=previewEpisode(selected.episode,saved.topic,body.optionIndex);
+            }
+            const input=validateInput({...saved.input,providerKeys:body.providerKeys||{},previewFirst:false});
+            job.status='running';job.expiresAt=null;job.error=null;job.warnings=[];job.cancelRequested=false;
+            job.storyPreparationSeconds||=(timingSummary(job)||job.performance)?.elapsedSeconds||0;
+            job._timing=undefined;
+            jobs.set(id,job);activeJob=job;
+            const controller=new AbortController();jobControllers.set(id,controller);
+            await checkpoint(job,'Creating approved story',24);
+            started=true;
+            void runWithProviders(input.providerKeys,()=>runWithGeminiUsage(job.geminiUsage??={},()=>runJob(job,input,selected)),controller.signal);
+            sendJSON(res,202,safeJob(job));
+          }finally{if(!started){busy=false;activeJob=null;jobControllers.delete(jobRoute[1]);}}
         } else if(req.method==='POST'&&jobRoute?.[2]==='cancel'){
           const job=jobs.get(jobRoute[1]);
           if(!job){sendJSON(res,404,{error:'Job not found'});return;}
@@ -2331,7 +2305,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
 
           void runWithProviders(
             input.providerKeys,
-            () => runJob(job, input),controller.signal
+            () => runWithGeminiUsage(job.geminiUsage??={},()=>runJob(job, input)),controller.signal
           );
 
           sendJSON(
@@ -2605,7 +2579,8 @@ if (
     }
   );
 
-  await cleanExpiredJobs();
+  // Serve health immediately; expired assets are cleaned in the background.
+  void cleanExpiredJobs().catch(error=>console.error('[CLEANUP] Startup cleanup failed:',error.message));
 
   const cleanupInterval = setInterval(
     () => {

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { normalizeEpisode, validateThreeFacts, licenseInfo, isFreesoundCC0, buildPlan, demoEpisode,
   semanticEffectAllowed, normalizeDiagram, resolveVoiceProfile, speechPerformance,
   mediaTitleMismatch, randomFactsSource, runWithProviders, wikipediaSource,
-  chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES,generationFetch,createWikimediaGate,wikimediaRetryMs } from '../lib/core.mjs';
+  gemini,runWithGeminiUsage,chooseTopic,topicSelectionContext,topicWasUsed,TOPIC_CATEGORIES,generationFetch,createWikimediaGate,wikimediaRetryMs } from '../lib/core.mjs';
 import { validateInput,VIDEO_TTL_MS,expireJob,normalizeFrontendOrigin,makeServer,processTool } from '../server.mjs';
-import {mkdir,writeFile,stat,readFile} from 'node:fs/promises';
+import {mkdir,writeFile,stat,readFile,rm} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -372,4 +372,81 @@ test('previous bubbles and waterfalls cannot reappear under common renamed topic
  for(const topic of ['water bubbles','Soap bubbles','BUBBLES','Water falls','Waterfalls'])assert.equal(topicWasUsed(topic,history),true,topic);
  assert.equal(topicWasUsed('Water turbine',history),false);
  const long=[...history,...Array.from({length:200},(_,i)=>({topic:'New '+i}))];assert.equal(topicWasUsed('water bubble',long),true);
+});
+
+test('preview persists exact narration without credentials and approval resumes without rewriting',{timeout:15000},async()=>{
+ const savedFetch=globalThis.fetch,previousDemo=process.env.DEMO_MODE;
+ process.env.DEMO_MODE='1';
+ const server=makeServer();await new Promise(ok=>server.listen(0,'127.0.0.1',ok));
+ const base='http://127.0.0.1:'+server.address().port;
+ let folder,id,entered;const ttsTexts=[];const ready=new Promise(resolve=>entered=resolve);
+ try{
+  const response=await savedFetch(base+'/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({demo:true,previewFirst:true,providerKeys:{FISH_API_KEY:'test-secret'}})});
+  assert.equal(response.status,202);id=(await response.json()).id;
+  let job;
+  for(let i=0;i<100;i++){
+   job=await(await savedFetch(base+'/api/jobs/'+id)).json();
+   if(job.status!=='running'&&job.expiresAt)break;
+   await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  assert.equal(job.status,'awaiting_approval');assert.ok(job.preview.narration);
+  assert.equal(job.videoUrl,null);assert.equal((await(await savedFetch(base+'/api/health')).json()).busy,false);
+  folder=join(resolve(process.env.JOBS_DIR||fileURLToPath(new URL('../jobs/',import.meta.url))),id);
+  const text=await readFile(join(folder,'approved-story.json'),'utf8');
+  assert.equal(text.includes('test-secret'),false);
+  const snapshot=JSON.parse(text);
+  assert.equal(job.preview.narration,snapshot.episode.scenes.map(s=>s.narration).join('\n\n'));
+  // Resume a saved story and intercept TTS before media/render work.
+  snapshot.input.demo=false;snapshot.input.voiceProvider='fish';snapshot.input.mediaMode='photos';snapshot.input.visualStyle='paper';
+  await writeFile(join(folder,'approved-story.json'),JSON.stringify(snapshot));
+  globalThis.fetch=async(url,options)=>{
+   assert.equal(String(url),'https://api.fish.audio/v1/tts','approval must not research or rewrite the story');
+   ttsTexts.push(JSON.parse(options.body).text);entered();
+   return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+  };
+  const approve=await savedFetch(base+'/api/jobs/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({providerKeys:{GEMINI_API_KEY:'test',FISH_API_KEY:'test'}})});
+  assert.equal(approve.status,202);await ready;
+  assert.ok(ttsTexts.includes(snapshot.episode.scenes[0].narration));
+  assert.equal((await savedFetch(base+'/api/jobs/'+id+'/approve',{method:'POST',body:'{}'})).status,409);
+  await savedFetch(base+'/api/jobs/'+id+'/cancel',{method:'POST'});
+  for(let i=0;i<100;i++){
+   if(!(await(await savedFetch(base+'/api/health')).json()).busy)break;
+   await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  assert.equal((await(await savedFetch(base+'/api/jobs/'+id)).json()).status,'cancelled');
+ }finally{
+  if(id)await savedFetch(base+'/api/jobs/'+id+'/cancel',{method:'POST'});
+  globalThis.fetch=savedFetch;
+  if(previousDemo===undefined)delete process.env.DEMO_MODE;else process.env.DEMO_MODE=previousDemo;
+  await new Promise(ok=>server.close(ok));
+  if(folder)await rm(folder,{recursive:true,force:true});
+ }
+});
+
+
+
+test('daily-exhausted credentials are attempted once per job; usage counts actual HTTP calls without secrets',async()=>{
+ const saved=globalThis.fetch,usage={};let calls=0;
+ try{
+  globalThis.fetch=async()=>{calls++;return Response.json({error:{message:'GenerateRequestsPerDay limit exceeded'}},{status:429});};
+  await runWithProviders({GEMINI_API_KEY:'private-a',GEMINI_API_KEY_2:'private-b',GEMINI_API_KEY_3:'private-c'},()=>runWithGeminiUsage(usage,async()=>{
+   await assert.rejects(gemini('first'),/Gemini unavailable/);
+   await assert.rejects(gemini('second'),/Gemini unavailable/);
+  }));
+  assert.equal(calls,3);assert.equal(usage.requests,3);assert.deepEqual(usage.statuses,{'429':3});
+  assert.equal(JSON.stringify(usage).includes('private-'),false);
+  await runWithProviders({GEMINI_API_KEY:'private-a'},()=>runWithGeminiUsage({},()=>assert.rejects(gemini('new job'),/Gemini unavailable/)));
+  assert.equal(calls,4,'new job can retry the credential');
+ }finally{globalThis.fetch=saved;}
+});
+
+test('Gemini usage records successful token counts and rejects crypto stock for historical tokens',async()=>{
+ const saved=globalThis.fetch,usage={};
+ try{
+  globalThis.fetch=async()=>Response.json({usageMetadata:{promptTokenCount:12,candidatesTokenCount:4},candidates:[{content:{parts:[{text:'{"ok":true}'}]}}]});
+  assert.deepEqual(await runWithProviders({GEMINI_API_KEY:'private'},()=>runWithGeminiUsage(usage,()=>gemini('example'))),{ok:true});
+  assert.deepEqual(usage,{requests:1,statuses:{'200':1},inputTokens:12,outputTokens:4});
+  assert.equal(mediaTitleMismatch('spinning a bitcoin on a table','old company scrip token'),true);
+  assert.equal(mediaTitleMismatch('spinning a bitcoin on a table','bitcoin'),false);
+ }finally{globalThis.fetch=saved;}
 });

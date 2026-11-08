@@ -64,7 +64,7 @@ test('Hindi copyeditor outage cannot silently return an unchecked creative draft
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(draft)}]}}]});
   };
   await assert.rejects(runWithProviders({GEMINI_API_KEY:'test'},()=>writeEpisode('waves',{url:'https://example.com',extract:'Wind makes surface waves.'},'hi',20)),/Hindi copy review failed: Gemini HTTP 400/);
-  assert.equal(copyCalls,3);
+  assert.equal(copyCalls,1);
  }finally{globalThis.fetch=saved;}
 });
 test('English fact metadata is translated without regenerating the already proofread Hindi storyboard',async()=>{
@@ -81,7 +81,7 @@ test('English fact metadata is translated without regenerating the already proof
    else if(prompt.startsWith('Translate EACH')){translations++;response={facts};}
    else if(prompt.includes('Independently review FINAL'))response={approved:true,issues:[]};
    else if(prompt.startsWith('SPOKEN CLAIM CHALLENGE'))response={approved:true,issues:[]};
-   else if(prompt.startsWith('EDITORIAL EVIDENCE REVIEW'))response={comedyHook:true,comicEnding:true,hookEvidence:{premiseSupported:true,answered:true,sourceQuote:"Source facts provided for the test",reason:"The opening premise and answer match the supplied source."},approved:true,confidence:.95,topicMatches:true,hookAnswered:true,scopePreserved:true,headlineFaithful:true,naturalDialogue:true,facts:[0,1,2].map(index=>({index,supported:true,confidence:.95,sourceQuote:'Source facts provided for the test'})),scenes:draft.scenes.map((_,index)=>({index,relevant:true,faithful:true,natural:true,confidence:.95,sourceQuote:"Source facts provided for the test"})),issues:[]};
+   else if(prompt.startsWith('EDITORIAL EVIDENCE REVIEW'))response={languageReview:{approved:true,issues:[]},spokenClaimChallenge:{approved:true,issues:[]},comedyHook:true,comicEnding:true,hookEvidence:{premiseSupported:true,answered:true,sourceQuote:"Source facts provided for the test",reason:"The opening premise and answer match the supplied source."},approved:true,confidence:.95,topicMatches:true,hookAnswered:true,scopePreserved:true,headlineFaithful:true,naturalDialogue:true,facts:[0,1,2].map(index=>({index,supported:true,confidence:.95,sourceQuote:'Source facts provided for the test'})),scenes:draft.scenes.map((_,index)=>({index,relevant:true,faithful:true,natural:true,confidence:.95,sourceQuote:"Source facts provided for the test"})),issues:[]};
    else{drafts++;response=draft;}
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(response)}]}}]});
   };

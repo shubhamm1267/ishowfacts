@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gemini, runWithProviders, demoEpisode, wikipediaSource,commonsImage,openverseImage,inspectVideoFrames } from '../lib/core.mjs';
-import { mixkitItem, vecteezyFree, syntheticStock, stockVideo,stockPhoto,createStockSession,createStockMediaCache,prefetchStockVideo,stockFile,stockLookup,commonsVideo,uploadDescription,moveCreditsToDescription } from '../lib/stock-video.mjs';
+import { mixkitItem, vecteezyFree, syntheticStock, stockVideo,topicFootageAvailability,stockPhoto,createStockSession,createStockMediaCache,prefetchStockVideo,stockFile,stockLookup,commonsVideo,uploadDescription,moveCreditsToDescription } from '../lib/stock-video.mjs';
 import {Resvg} from '@resvg/resvg-js';
 import {mkdtemp,readFile,writeFile,readdir,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -413,4 +413,25 @@ test('original paper-style video inspection also rejects embedded captions and b
   const check=()=>runWithProviders({GEMINI_API_KEY:'test'},()=>inspectVideoFrames([image],'animal','animal','animal'));
   assert.equal(await check(),true);row.noEmbeddedText=false;assert.equal(await check(),false);row.noEmbeddedText=true;delete row.noEmbeddedBranding;assert.equal(await check(),false);
  }finally{globalThis.fetch=saved;}
+});
+
+
+test('automatic topic feasibility searches Instagram first and downloads nothing before approval',async()=>{
+ const saved=globalThis.fetch,events=[];
+ try{
+  globalThis.fetch=async address=>{events.push(String(address));assert.equal(new URL(address).hostname,'api.pexels.com');return Response.json({videos:[{url:'https://www.pexels.com/video/steam-iron-123/',video_files:[{width:1080,height:1920}]}]});};
+  const result=await runWithProviders({PEXELS_API_KEY:'test'},()=>topicFootageAvailability('Steam iron',{discover:async()=>{events.push('Instagram first');return [];}}));
+  assert.equal(events[0],'Instagram first');assert.equal(result.available,true);assert.equal(result.metadataOnly,true);assert.equal(events.length,2);
+  const noMatch=await runWithProviders({PEXELS_API_KEY:'test'},()=>topicFootageAvailability('Rare undiscovered object',{discover:async()=>[]}));assert.equal(noMatch.available,null,'nonmatching titles are inconclusive, not proof that a common subject has no footage');
+  globalThis.fetch=async()=>Response.json({videos:[]});
+  assert.equal((await runWithProviders({PEXELS_API_KEY:'test'},()=>topicFootageAvailability('Rare undiscovered object',{discover:async()=>[]}))).available,false);
+  globalThis.fetch=async()=>new Response('',{status:403});
+  const blocked=await runWithProviders({PEXELS_API_KEY:'test'},()=>topicFootageAvailability('Rare undiscovered object',{discover:async()=>[]}));assert.equal(blocked.available,null,'a blocked provider is uncertainty, not proof of missing footage');
+ }finally{globalThis.fetch=saved;}
+});
+
+
+test('blank green-screen devices and chroma placeholders are rejected before downloading',()=>{
+ for(const title of ['Woman Using Smartphone with Green Screen','Blank blue-screen phone','Chroma key tablet','Device placeholder mockup'])assert.equal(syntheticStock(title),true);
+ assert.equal(syntheticStock('A person using a working smartphone alarm'),false);
 });

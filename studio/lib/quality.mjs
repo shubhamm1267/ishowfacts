@@ -10,6 +10,14 @@ export function reviewFailureDetails(error){
  return items.length?[...new Set(items)].slice(0,6).join('; ').slice(0,1800):String(error?.message||'Review failed');
 }
 
+// Only clearly stylistic hook feedback is non-blocking. A weak joke must not
+// trigger a rewrite; an unsupported premise or unanswered promise still must.
+export function creativeHookNote(issue){
+ const text=String(issue||'').trim().replace(/not only a factual question\.?$/i,'');
+ if(/unsupported|unsourced|factual|false|mislead|contradict|causal|qualifier|unanswered|not answered|does not answer|grammar|spelling|matra|incorrect|inaccurate/i.test(text))return false;
+ return /^(?:Opening needs a short topic-linked funny|Final spoken line needs an earned humorous callback|(?:The )?(?:hook|opening|ending|callback|punchline|comedy|humou?r|joke)\b.*\b(?:weak|stronger|funnier|not funny|missing|lacks?|needs? more|not engaging|not curious|too generic|same family)|(?:Missing|Weak|Add|Improve|Strengthen)\b.*\b(?:comedy|comic|humou?r|callback|punchline|hook variety))/i.test(text);
+}
+
 // Correct only clear slow scene outliers; never slow an energetic take down.
 // A conservative cap avoids large time-stretch artifacts or pitch changes.
 export function narrationTempo(text,seconds,{energetic=false,language='hi'}={}){
@@ -60,7 +68,7 @@ export function editorialIssues(review,episode,source){
 export function shotReview(review,count,{cropOnly=false,requireClean=false}={}){
  const rows=Array.isArray(review)?review:review?.frames;
  if(!Array.isArray(rows)||rows.length!==count||rows.some(r=>!r||typeof r!=='object'||Array.isArray(r)))return {sourceApproved:false,cropApproved:false,focus:[],contain:false};
- const sourceApproved=rows.every(r=>r.topicMatches===true&&r.exactEntityMatches===true&&r.realMedia===true&&(!requireClean||(r.noEmbeddedText===true&&r.noEmbeddedBranding===true))&&r.subjectVisible===true&&r.roleAppropriate===true&&confidence(r.confidence));
+ const sourceApproved=rows.every(r=>r.topicMatches===true&&r.exactEntityMatches===true&&r.realMedia===true&&(!requireClean||(r.noEmbeddedText===true&&r.noEmbeddedBranding===true&&r.noPlaceholder===true))&&r.subjectVisible===true&&r.roleAppropriate===true&&confidence(r.confidence));
  const cropApproved=sourceApproved&&rows.every(r=>r.cropVisible===true&&r.requiredFeatureVisible===true);
  const focus=rows.map((r,i)=>({at:count===1?.5:[.12,.5,.85][i],point:Array.isArray(r.focus)&&r.focus.length===2&&r.focus.every(v=>Number.isFinite(v)&&v>=0&&v<=1)?r.focus:null}));
  return {sourceApproved,cropApproved,focus:focus.every(f=>f.point)?focus:[],contain:rows.some(r=>r.needsContain===true),cropOnly};
@@ -73,7 +81,7 @@ export function renderedIssues(review,indices){
  const failed=[];
  indices.forEach((index,i)=>{
   const row=rows[i];
-  if(row?.topicMatches!==true||row.exactEntityMatches!==true||row.subjectVisible!==true||row.headlineCorrect!==true||row.layoutCorrect!==true||!confidence(row.confidence)){
+  if(row?.topicMatches!==true||row.exactEntityMatches!==true||row.subjectVisible!==true||row.headlineCorrect!==true||row.layoutCorrect!==true||row.noPlaceholder!==true||!confidence(row.confidence)){
    failed.push(index);issues.push(`Scene ${index+1}: ${String(row?.reason||'Final frame did not pass')}`);
   }
  });

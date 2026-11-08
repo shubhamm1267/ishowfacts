@@ -4,7 +4,7 @@ export function recordStage(job,stage,now=Date.now()){
   timing.stages.push({stage:timing.stage,seconds:Math.max(0,now-timing.stageStarted)/1000});
   timing.stage=stage;timing.stageStarted=now;
  }
- if(job.status==='complete'||job.status==='failed')timing.finished=now;
+ if(['complete','failed','cancelled','awaiting_approval'].includes(job.status))timing.finished=now;
 }
 export function timingSummary(job,now=Date.now()){
  const t=job._timing;if(!t)return null;

@@ -20,23 +20,14 @@ test('comedy repair changes only opening and ending narration, preserving approv
  assert.throws(()=>applyComedyEdges(original,{opening:'missing ending'}),/Incomplete/);
 });
 
-test('targeted comedy proposals use all three key slots and reject unfaithful or unapproved choices',async()=>{
- const saved=globalThis.fetch,slots=[];let faithful=true;
+test('one targeted comedy proposal preserves the middle and malformed output cannot replace narration',async()=>{
+ const saved=globalThis.fetch;let calls=0,valid=true;
  const original={language:'en',scenes:[{narration:'first'},{narration:'middle'},{narration:'last'}]};
  try{
-  globalThis.fetch=async(url,options)=>{
-   const prompt=JSON.parse(options.body).contents[0].parts[0].text;
-   let answer;
-   if(prompt.startsWith('TARGETED COMEDY EDGE REPAIR')){
-    const key=options.headers['x-goog-api-key'];slots.push(key);answer={opening:'Opening '+key,ending:'Ending '+key};
-   }else{assert.match(prompt,/SELECT COMEDY REPAIR/);answer={index:1,comedyHook:true,comicEnding:true,faithful,natural:true};}
-   return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer)}]}}]});
-  };
-  const keys={GEMINI_API_KEY:'one',GEMINI_API_KEY_2:'two',GEMINI_API_KEY_3:'three'};
-  const changed=await runWithProviders(keys,()=>repairComedyEdges(original,{extract:'Source facts'}));
-  assert.equal(new Set(slots).size,3);assert.equal(changed.scenes[1].narration,'middle');
-  faithful=false;
-  assert.equal(await runWithProviders(keys,()=>repairComedyEdges(original,{extract:'Source facts'})),null);
+  globalThis.fetch=async(url,options)=>{calls++;assert.match(JSON.parse(options.body).contents[0].parts[0].text,/TARGETED COMEDY EDGE REPAIR/);return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(valid?{opening:'new first',ending:'new last'}:{opening:'missing ending'})}]}}]});};
+  const result=await runWithProviders({GEMINI_API_KEY:'one',GEMINI_API_KEY_2:'two',GEMINI_API_KEY_3:'three'},()=>repairComedyEdges(original,{extract:'Source facts'}));
+  assert.equal(calls,1);assert.equal(result.scenes[1].narration,'middle');
+  valid=false;assert.equal(await runWithProviders({GEMINI_API_KEY:'one'},()=>repairComedyEdges(original,{extract:'Source facts'})),null);
  }finally{globalThis.fetch=saved;}
 });
 
@@ -68,10 +59,10 @@ test('energetic narration corrects only slow outliers with a bounded pitch-prese
  assert.equal(narrationTempo('one two',4,{energetic:true}),1);
  assert.equal(narrationTempo(line,NaN,{energetic:true}),1);
 });
-const approved=()=>({hookEvidence:{premiseSupported:true,answered:true,sourceQuote:"the tallest living terrestrial animal",reason:"The source supports the opening premise and supplied answer."},approved:true,confidence:.95,topicMatches:true,hookAnswered:true,scopePreserved:true,headlineFaithful:true,naturalDialogue:true,
+const approved=()=>({languageReview:{approved:true,issues:[]},spokenClaimChallenge:{approved:true,issues:[]},hookEvidence:{premiseSupported:true,answered:true,sourceQuote:"the tallest living terrestrial animal",reason:"The source supports the opening premise and supplied answer."},approved:true,confidence:.95,topicMatches:true,hookAnswered:true,scopePreserved:true,headlineFaithful:true,naturalDialogue:true,
  facts:['the tallest living terrestrial animal','Its diet includes leaves','Males engage in necking'].map((sourceQuote,index)=>({index,sourceQuote,supported:true,confidence:.95})),
  scenes:[0,1].map(index=>({index,relevant:true,faithful:true,natural:true,confidence:.95,sourceQuote:"Its diet includes leaves"})),issues:[]});
-const frame=()=>({topicMatches:true,exactEntityMatches:true,realMedia:true,noEmbeddedText:true,noEmbeddedBranding:true,subjectVisible:true,roleAppropriate:true,cropVisible:true,requiredFeatureVisible:true,focus:[.8,.4],confidence:.95});
+const frame=()=>({topicMatches:true,exactEntityMatches:true,realMedia:true,noEmbeddedText:true,noEmbeddedBranding:true,noPlaceholder:true,subjectVisible:true,roleAppropriate:true,cropVisible:true,requiredFeatureVisible:true,focus:[.8,.4],confidence:.95});
 
 test('hidden-anatomy context contracts name the visible animal rather than requiring cells in whole-animal footage',async()=>{
  const {prepareMediaContracts}=await import('../lib/core.mjs');const saved=globalThis.fetch;
@@ -145,7 +136,7 @@ test('shot reviews accept direct arrays without relaxing any evidence or crop ch
 });
 
 test('final exported frame review identifies only the affected scene, malformed review rejects all',()=>{
- const good={topicMatches:true,exactEntityMatches:true,subjectVisible:true,headlineCorrect:true,layoutCorrect:true,confidence:.95};
+ const good={topicMatches:true,exactEntityMatches:true,subjectVisible:true,headlineCorrect:true,layoutCorrect:true,noPlaceholder:true,confidence:.95};
  assert.deepEqual(renderedIssues({approved:true,confidence:.95,frames:[good,{...good,subjectVisible:false,reason:'Subject cropped out'}]},[2,4]).indices,[4]);
  assert.deepEqual(renderedIssues({},[2,4]).indices,[2,4]);
  assert.deepEqual(renderedIssues({approved:true,confidence:.95,frames:[{...good,exactEntityMatches:false}]},[4]).indices,[4]);
@@ -204,7 +195,7 @@ test('malformed review citations are repaired without rewriting an approved stor
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(review)}]}}]});
   };
   const result=await runWithProviders({GEMINI_API_KEY:'test'},()=>finalizeEpisode(story,source));
-  assert.deepEqual(result,story);assert.equal(calls.length,3);assert.equal(calls.filter(p=>p.startsWith('REPAIR REVIEW CITATIONS ONLY')).length,1);
+  assert.deepEqual(result,story);assert.equal(calls.length,2);assert.equal(calls.filter(p=>p.startsWith('REPAIR REVIEW CITATIONS ONLY')).length,1);
  }finally{globalThis.fetch=saved;}
 });
 
@@ -221,37 +212,36 @@ test('shot and hook citation repair preserves the approved story and cannot appr
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(valid)}]}}]});
   };
   assert.deepEqual(await runWithProviders({GEMINI_API_KEY:'test'},()=>finalizeEpisode(story,source)),story);
-  assert.equal(calls.length,3);assert.equal(calls.filter(p=>p.startsWith('REPAIR REVIEW CITATIONS ONLY')).length,1);
+  assert.equal(calls.length,2);assert.equal(calls.filter(p=>p.startsWith('REPAIR REVIEW CITATIONS ONLY')).length,1);
   const rejected=approved();rejected.hookEvidence.premiseSupported=false;
   assert.match(editorialIssues(rejected,episode,source).join(' '),/Opening premise/);
  }finally{globalThis.fetch=saved;}
 });
 
-test('a separate spoken-claim challenge blocks guarantees missed by the broad editorial review',async()=>{
+test('the combined spoken-claim verdict blocks guarantees despite broad editorial approval',async()=>{
  const saved=globalThis.fetch;
  const story={language:'en',headlineText:'The animal has unusual traits 🤔',facts:approved().facts.map(f=>f.sourceQuote),scenes:[0,1,2].map(factIndex=>({factIndex,visual:'photo',narration:source.extract,line1:'Animal',line2:'Traits',visualQuery:'animal leaves'}))};
  try{
   globalThis.fetch=async(url,init)=>{
    const prompt=JSON.parse(init.body).contents[0].parts[0].text;
    const result=approved();result.scenes=story.scenes.map((_,index)=>({index,relevant:true,faithful:true,natural:true,confidence:.95,sourceQuote:result.facts[index].sourceQuote}));
-   const answer=prompt.startsWith('SPOKEN CLAIM CHALLENGE')?{approved:false,issues:['Unsupported guarantee of a perfect result']}:prompt.startsWith('AUTOMATIC EDITORIAL REPAIR')?story:result;
+   result.spokenClaimChallenge={approved:false,issues:['Unsupported guarantee of a perfect result']};
+   const answer=prompt.startsWith('AUTOMATIC EDITORIAL REPAIR')?story:result;
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer)}]}}]});
   };
   await assert.rejects(runWithProviders({GEMINI_API_KEY:'test'},()=>finalizeEpisode(story,source)),error=>error instanceof QualityError&&error.issues.some(i=>i.includes('Unsupported guarantee')));
  }finally{globalThis.fetch=saved;}
 });
-test('framing repair checks actual repaired crop and keeps camera focus independent from pointing',async()=>{
- const saved=globalThis.fetch,assets=await mkdtemp(join(tmpdir(),'crop-review-')),sourcePath=join(assets,'source.jpg');
- await writeFile(sourcePath,Buffer.from([255,216,255,217]));
- const commands=[];let calls=0;
+test('local framing preserves chosen fit without inventing an AI subject or pointer location',async()=>{
+ const saved=globalThis.fetch,assets=await mkdtemp(join(tmpdir(),'crop-review-'));
  try{
-  globalThis.fetch=async()=>{calls++;return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({frames:[{...frame(),cropVisible:calls>1}]})}]}}]});};
-  const verify=framingReviewer({root:'.',python:'python',assets,run:async(cmd,args)=>{commands.push(args);await writeFile(args[2],Buffer.from([255,216,255,217]));}});
-  const result=await runWithProviders({GEMINI_API_KEY:'test'},()=>verify([sourcePath],{subjectEntity:'Peacock',narration:'A bird'},'Peacock','test'));
-  assert.equal(calls,2);assert.equal(result.mediaFit,'cover');assert.deepEqual(result.subjectFocus,[{at:.5,point:[.8,.4]}]);assert.equal(result.focus,undefined);
-  assert.ok(commands[1].includes('--focus'));
+  globalThis.fetch=()=>{throw Error('Visual review must not call Gemini');};
+  const verify=framingReviewer({root:'.',python:'python',assets,fit:'contain',run:async()=>JSON.stringify({frames:[{approved:true,issues:[],hashUseful:false}],warnings:[]})});
+  const result=await verify(['source.jpg'],{subjectEntity:'Peacock'},'Peacock','test',{title:'Peacock in a garden'});
+  assert.equal(result.mediaFit,'contain');assert.deepEqual(result.subjectFocus,[]);assert.equal(result.focus,undefined);
  }finally{globalThis.fetch=saved;}
 });
+
 test('media search repair requires source evidence and cannot overwrite spoken content or add code',async()=>{
  const saved=globalThis.fetch;let valid=true;
  try{
@@ -263,25 +253,23 @@ test('media search repair requires source evidence and cannot overwrite spoken c
  }finally{globalThis.fetch=saved;}
 });
 
-test('Hindi, editorial and spoken-claim reviews all start before any one finishes',async()=>{
- const saved=globalThis.fetch,seen=new Set();let release;
- const gate=new Promise(resolve=>release=resolve),timeout=setTimeout(()=>release(),2000);
+test('Hindi and causal checks use one combined request with explicit verdicts',async()=>{
+ const saved=globalThis.fetch,seen=new Set();
  const story={language:'hi',headlineText:'एक खास जानवर 🤔',facts:approved().facts.map(f=>f.sourceQuote),scenes:[0,1,2].map(factIndex=>({factIndex,visual:'photo',narration:'क्या कभी इस जानवर को देखा है?',line1:'जानवर',line2:'खास',visualQuery:'animal'}))};
  try{
   globalThis.fetch=async(url,init)=>{
    const prompt=JSON.parse(init.body).contents[0].parts[0].text;
    const kind=prompt.startsWith('EDITORIAL EVIDENCE REVIEW')?'editorial':prompt.startsWith('SPOKEN CLAIM CHALLENGE')?'claims':'hindi';
-   seen.add(kind);if(seen.size===3)release();await gate;
-   assert.equal(seen.size,3,'review stages ran sequentially');
+   seen.add(kind);assert.match(prompt,/COMBINED REVIEW/);assert.match(prompt,/CAUSAL MECHANISM AUDIT/);
    const review=approved();review.scenes=story.scenes.map((_,index)=>({index,relevant:true,faithful:true,natural:true,confidence:.95,sourceQuote:review.facts[index].sourceQuote}));
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(kind==='editorial'?review:{approved:true,issues:[]})}]}}]});
   };
   assert.deepEqual(await runWithProviders({GEMINI_API_KEY:'parallel-a',GEMINI_API_KEY_2:'parallel-b',GEMINI_API_KEY_3:'parallel-c'},()=>finalizeEpisode(story,source)),story);
-  assert.equal(seen.size,3);
- }finally{clearTimeout(timeout);release();globalThis.fetch=saved;}
+  assert.deepEqual([...seen],['editorial']);
+ }finally{globalThis.fetch=saved;}
 });
 
-test('duration and comedy gates reject an otherwise factually approved dry short script',async()=>{
+test('local duration check still rejects a script that is too short',async()=>{
  const saved=globalThis.fetch;
  const story={language:'en',headlineText:'The animal has unusual traits 🤔',facts:approved().facts.map(f=>f.sourceQuote),scenes:[0,1,2].map(factIndex=>({factIndex,visual:'photo',narration:source.extract,line1:'Animal',line2:'Traits',visualQuery:'animal leaves'}))};
  try{
@@ -291,7 +279,7 @@ test('duration and comedy gates reject an otherwise factually approved dry short
    const answer=prompt.startsWith('SPOKEN CLAIM CHALLENGE')?{approved:true,issues:[]}:prompt.startsWith('AUTOMATIC EDITORIAL REPAIR')?story:result;
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer)}]}}]});
   };
-  await assert.rejects(runWithProviders({GEMINI_API_KEY:'test'},()=>finalizeEpisode(story,source,{seconds:30})),error=>error instanceof QualityError&&error.issues.some(i=>i.includes('Narration has'))&&error.issues.some(i=>i.includes('Opening needs'))&&error.issues.some(i=>i.includes('Final spoken line')));
+  await assert.rejects(runWithProviders({GEMINI_API_KEY:'test'},()=>finalizeEpisode(story,source,{seconds:30})),error=>error instanceof QualityError&&error.issues.some(i=>i.includes('Narration has'))&&!error.issues.some(i=>i.includes('Opening needs'))&&!error.issues.some(i=>i.includes('Final spoken line')));
  }finally{globalThis.fetch=saved;}
 });
 
@@ -302,7 +290,7 @@ test('local validation failures use bounded repair and still require a fresh rev
  assert.equal(repairs,1);assert.equal(reviews,1);assert.equal(result.episode.valid,true);
 });
 
-test('comedy-only rejection repairs edge shots and reruns factual review without a full storyboard rewrite',async()=>{
+test('weak comedy flags do not trigger proposals, rechecks or full storyboard rewrites',async()=>{
  const saved=globalThis.fetch;let reviews=0,claims=0,proposals=0;
  const story={language:'en',headlineText:'Animal mystery',facts:approved().facts.map(f=>f.sourceQuote),scenes:[0,1,2].map(factIndex=>({factIndex,visual:'photo',narration:('Why does this animal have these traits? '+source.extract+' ').repeat(2),line1:'Animal',line2:'Traits',visualQuery:'animal leaves'}))};
  try{
@@ -316,12 +304,12 @@ test('comedy-only rejection repairs edge shots and reruns factual review without
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer)}]}}]});
   };
   const result=await runWithProviders({GEMINI_API_KEY:'one',GEMINI_API_KEY_2:'two',GEMINI_API_KEY_3:'three'},()=>finalizeEpisode(story,source,{seconds:30}));
-  assert.equal(proposals,3);assert.equal(reviews,2);assert.equal(claims,2);
+  assert.equal(proposals,0);assert.equal(reviews,1);assert.equal(claims,0);
   assert.deepEqual(result.scenes[1],story.scenes[1]);assert.deepEqual(result.facts,story.facts);
  }finally{globalThis.fetch=saved;}
 });
 
-test('missing comedy fields receive a focused review rather than rewriting an approved story',async()=>{
+test('missing optional comedy fields do not trigger another API request',async()=>{
  const saved=globalThis.fetch;let focused=0,rewrites=0;
  const story={language:'en',headlineText:'Animal mystery',facts:approved().facts.map(f=>f.sourceQuote),scenes:[0,1,2].map(factIndex=>({factIndex,visual:'photo',narration:('Why does this animal have these traits? '+source.extract+' ').repeat(2),line1:'Animal',line2:'Traits',visualQuery:'animal leaves'}))};
  try{
@@ -335,7 +323,7 @@ test('missing comedy fields receive a focused review rather than rewriting an ap
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer)}]}}]});
   };
   assert.deepEqual(await runWithProviders({GEMINI_API_KEY:'test'},()=>finalizeEpisode(story,source,{seconds:30})),story);
-  assert.equal(focused,1);assert.equal(rewrites,0);
+  assert.equal(focused,0);assert.equal(rewrites,0);
  }finally{globalThis.fetch=saved;}
 });
 
@@ -352,7 +340,7 @@ test('context contracts preserve speech and reject unsupported evidence relaxati
 
 test('clean footage gate rejects captions, watermarks and missing cleanliness evidence before crop repair',()=>{
  const good=frame();assert.equal(shotReview([good],1,{requireClean:true}).sourceApproved,true);
- for(const key of ['noEmbeddedText','noEmbeddedBranding']){
+ for(const key of ['noEmbeddedText','noEmbeddedBranding','noPlaceholder']){
   assert.equal(shotReview([{...good,[key]:false}],1,{requireClean:true}).sourceApproved,false);
   const missing={...good};delete missing[key];assert.equal(shotReview([missing],1,{requireClean:true}).sourceApproved,false);
  }

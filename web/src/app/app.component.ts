@@ -7,7 +7,13 @@ import { timeout, retry, timer, Subscription } from 'rxjs';
 interface Job {
   instanceId?: string;
   selectedTopics?: string[];
-  id: string; status: 'running' | 'failed' | 'complete' | 'cancelled'; stage: string; progress: number;
+  id: string; status: 'running' | 'awaiting_approval' | 'failed' | 'complete' | 'cancelled'; stage: string; progress: number;
+  preview?: {title:string;headline:string;topic:string;narration:string};
+  storyOptions?: {index:number;title:string;headline:string;topic:string;hook:string;narration:string;reviewed:boolean}[];
+  previewNotice?: string;
+  performance?: {elapsedSeconds:number;stages:{stage:string;seconds:number}[]};
+  storyPreparationSeconds?: number;
+  geminiUsage?: {requests:number;inputTokens?:number;outputTokens?:number};
   cancelRequested?: boolean;
   title: string; topic: string; category?: string; error?: string; warnings: string[]; demo?: boolean;
   youtubeTitle?: string; uploadTitleUrl?: string; uploadDescriptionUrl?: string;
@@ -28,7 +34,7 @@ interface Health {
     <div class="layout">
       <header class="topbar">
         <div class="logo"><span class="logo-mark">P<span class="dot">.</span></span><div><strong>PAPER FACTS</strong><small>CINEMATIC DYNAMIC STUDIO / V8</small></div></div>
-        <span class="top-pill"><i></i> {{ health?.ok ? 'LOCAL ENGINE ONLINE' : 'ENGINE DISCONNECTED' }}</span>
+        <span class="top-pill"><i></i> {{ health?.ok ? 'ENGINE ONLINE' : healthLoading ? 'CONNECTING TO ENGINE' : 'ENGINE OFFLINE' }}</span>
       </header>
 
       <section class="hero">
@@ -141,6 +147,7 @@ interface Health {
           <div *ngIf="logoDataUrl" class="logo-preview"><img [src]="logoDataUrl" alt="Your channel logo preview" width="54" height="54" style="object-fit:contain"><button type="button" class="secondary" (click)="removeLogo()" [disabled]="working">REMOVE LOGO</button></div>
           <label for="mediaMode">VISUAL MEDIA</label><select id="mediaMode" [(ngModel)]="mediaMode"><option value="mixed">Instagram first - stock/photo fallback</option><option *ngIf="visualStyle === 'paper'" value="photos">Photos only</option></select>
           <p class="config" *ngIf="visualStyle === 'reference-news'">{{ mediaPlanLabel }} · clean cuts timed to narration; Instagram sources first.</p>
+          <p class="config">Local footage checks: title/tag matching, frame quality and duplicates. Exact subject/action recognition is not performed.</p>
           <label for="voiceProvider">VOICE PROVIDER</label><select id="voiceProvider" [(ngModel)]="voiceProvider"><option value="fish">Fish Audio</option><option value="heygen">HeyGen · Yash</option><option value="cartesia">Cartesia</option></select>
           <label for="factMode">FACT SELECTION</label><select id="factMode" [(ngModel)]="factMode" (ngModelChange)="onFactModeChange()"><option value="topic">1 fact story · one topic</option><option value="random">3 facts · three different topics</option></select>
           <p class="config" *ngIf="factMode === 'random'">Three surprising topics, each researched separately. Desi hooks, quick reveals and light humor.</p>
@@ -164,16 +171,40 @@ interface Health {
         </section>
 
         <section class="panel preview">
-          <div class="panel-heading result-heading"><div><span class="mini-label">02 / OUTPUT</span><h2>Your documentary</h2></div><span class="status" [class.complete]="job?.status === 'complete'">{{ job?.status === 'complete' ? 'RENDER READY' : job?.status === 'running' ? 'GENERATING' : job?.status === 'cancelled' ? 'CANCELLED' : 'AWAITING FILM' }}</span></div>
-          <div class="screen" [class.has-video]="job?.status === 'complete'" [style.aspect-ratio]="previewAspectRatio">
+          <div class="panel-heading result-heading"><div><span class="mini-label">02 / OUTPUT</span><h2>Your documentary</h2></div><span class="status" [class.complete]="job?.status === 'complete'">{{ job?.status === 'complete' ? 'RENDER READY' : job?.status === 'running' ? 'GENERATING' : job?.status === 'cancelled' ? 'CANCELLED' : job?.status === 'awaiting_approval' ? 'REVIEW STORY' : 'AWAITING FILM' }}</span></div>
+          <div class="screen" *ngIf="job?.status !== 'awaiting_approval'" [class.has-video]="job?.status === 'complete'" [style.aspect-ratio]="previewAspectRatio">
             <video *ngIf="job?.status === 'complete' && job?.videoUrl" [src]="job!.videoUrl!" controls playsinline preload="metadata"></video>
             <div class="empty" *ngIf="job?.status !== 'complete'"><span class="frame-top">FIG. 01 <span>{{ visualStyle === 'reference-news' ? '9:16 / SAFE FRAME' : '9:16 / PAPER CUT' }}</span></span><div class="empty-symbol">✳</div><b>{{ job?.status === 'running' ? 'WORK IN\nPROGRESS' : 'YOUR FILM\nBEGINS HERE' }}</b><p>{{ job?.stage || 'Ready when you are.' }}</p><span class="frame-bottom">A WORLD OF FACTS · ONE CLICK</span></div>
           </div>
           <div *ngIf="job?.status === 'running'" class="progress-area"><div class="progress-title"><strong>{{ job?.stage }}</strong><span>{{ job?.progress }}%</span></div><div class="progress-track"><div [style.width.%]="job?.progress || 0"></div></div><small>Processing time depends on the server and providers.</small><button class="secondary" (click)="cancelGeneration()" [disabled]="cancelling || job?.cancelRequested">{{ cancelling || job?.cancelRequested ? 'CANCELLING?' : 'CANCEL GENERATION' }}</button></div>
           <div *ngIf="job?.status === 'complete'" class="finished"><h3>{{ job?.title }}</h3><p *ngIf="job?.category">Category: {{ job?.category }}</p><p>Topic: {{ job?.topic }} · {{ job?.duration | number:'1.0-0' }}s · Vertical MP4</p><div class="actions"><a class="download" [href]="job!.downloadUrl!">↓ DOWNLOAD MP4</a><a [href]="'/api/jobs/' + job!.id + '/credits'" download>ASSET CREDITS</a><a *ngIf="job?.uploadDescriptionUrl" [href]="job!.uploadDescriptionUrl!" download>UPLOAD DESCRIPTION</a><a [href]="job!.storyboardUrl!" download>GEMINI STORYBOARD JSON</a><a [href]="job!.animationPlanUrl!" download>ANIMATION PLAN JSON</a></div><p *ngFor="let source of job!.sources">Fact source: <a [href]="source.url" target="_blank" rel="noopener noreferrer">{{ source.name }}</a></p><p *ngIf="job?.demo" class="config">Offline demo only — illustrative art, no Gemini, Cartesia or Freesound calls.</p><div class="contact-preview" *ngIf="job?.contactUrl"><h4>SCENE-BY-SCENE PREVIEW</h4><a [href]="job!.contactUrl!" target="_blank" rel="noopener noreferrer"><img [src]="job!.contactUrl!" alt="Full scene contact sheet from original renderer" loading="lazy"></a></div></div>
           <div *ngIf="job?.status === 'complete' && job?.youtubeTitle" class="finished"><label>YOUTUBE UPLOAD TITLE</label><p>{{ job!.youtubeTitle }}</p><button class="secondary" (click)="copyUploadTitle()">{{ titleCopied ? 'COPIED' : 'COPY TITLE' }}</button><a *ngIf="job?.uploadTitleUrl" [href]="job!.uploadTitleUrl!" download>DOWNLOAD TITLE TXT</a></div>
+          <section *ngIf="(job?.status === 'awaiting_approval' || job?.status === 'failed') && job?.preview" class="story-preview">
+            <h2>{{ job?.storyOptions?.length ? 'Choose your script' : 'Review your story' }}</h2>
+            <p *ngIf="job?.previewNotice" class="config">{{ job!.previewNotice }}</p>
+            <p *ngIf="job?.status === 'failed'" class="config">Your scripts are saved. You can choose another script or retry.</p>
+            <ng-container *ngIf="job?.storyOptions?.length; else singleStory">
+              <article *ngFor="let option of job!.storyOptions; let i = index" class="finished" style="margin:16px 0;padding:18px;border:1px solid #d7d7d7;border-radius:12px">
+                <h3>Script {{ i + 1 }}: {{ option.title }}</h3>
+                <p><strong>Topic:</strong> {{ option.topic }}</p>
+                <p><strong>Hook:</strong> {{ option.hook }}</p>
+                <p style="white-space:pre-wrap;line-height:1.8">{{ option.narration }}</p>
+                <p class="config">{{ option.reviewed ? 'Facts and language reviewed.' : 'Draft: selected script will be reviewed before narration.' }}</p>
+                <button class="primary" (click)="approveStory(option.index)" [disabled]="working">MAKE VIDEO WITH SCRIPT {{ i + 1 }}</button>
+              </article>
+            </ng-container>
+            <ng-template #singleStory>
+            <p><strong>Topic:</strong> {{ job!.preview!.topic }}</p>
+            <p><strong>Title:</strong> {{ job!.preview!.title }}</p>
+            <p style="white-space:pre-wrap;line-height:1.8">{{ job!.preview!.narration }}</p>
+            <button class="primary" (click)="approveStory()" [disabled]="working">MAKE THIS VIDEO</button>
+            </ng-template>
+            <button class="secondary" (click)="newStory()" [disabled]="working">NEW TOPIC / STORY</button>
+            <p class="config">Voiceover and footage start after you approve. Preview expires in 30 minutes.</p>
+          </section>
+          <p *ngIf="job?.performance" class="config">Processing: {{ job!.performance!.elapsedSeconds | number:'1.0-0' }} seconds<span *ngIf="job?.storyPreparationSeconds"> + {{ job!.storyPreparationSeconds | number:'1.0-0' }} seconds story preparation. Approval waiting time excluded.</span><span *ngIf="job?.geminiUsage"> ? Gemini requests: {{ job!.geminiUsage!.requests }}</span></p>
           <p *ngIf="job?.status === 'complete'" class="config">Auto-deletes 30 minutes after generation. Download your video before then.<span *ngIf="job?.expiresAt"> Available until {{ job!.expiresAt | date:'shortTime' }}.</span></p>
-          <div *ngIf="job?.warnings?.length" class="warnings"><strong>Asset notes</strong><p *ngFor="let w of job!.warnings">{{ w }}</p></div>
+          <details *ngIf="job?.warnings?.length" class="warnings"><summary>Media selection details ({{ job!.warnings.length }})</summary><p *ngFor="let w of job!.warnings">{{ w }}</p></details>
         </section>
       </main>
       <footer><span>Footage: <a href="https://www.instagram.com" target="_blank" rel="noopener noreferrer">Instagram</a> / <a href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Pexels</a> ? <a href="https://coverr.co" target="_blank" rel="noopener noreferrer">Coverr</a></span><span>{{ visualStyle === 'reference-news' ? '1080 × 1440 · 3:4 REFERENCE' : '1080 × 1920 · PAPER-DOC' }} · SOURCE DETAILS SAVED</span></footer>
@@ -193,6 +224,7 @@ export class AppComponent implements OnInit, OnDestroy {
   healthLoading = false;
   healthError = '';
   private healthRequest?: Subscription;
+  private restoringJob = false;
   job: Job | null = null;
 
   topic = '';
@@ -251,25 +283,28 @@ export class AppComponent implements OnInit, OnDestroy {
     this.healthError = '';
     this.healthRequest = this.http.get<Health>('/api/health').pipe(
       timeout(35000),
-      retry({count: 2, delay: (response, attempt) => {
+      retry({count: 5, delay: (response, attempt) => {
         if (response.status && ![408, 429, 500, 502, 503, 504].includes(response.status)) throw response;
-        return timer(attempt * 2000);
+        return timer(Math.min(attempt * 2000,10000));
       }})
     ).subscribe({
       next: health => {
         this.health = health;
         this.healthLoading = false;
 
-        if (health.activeJobId) {
+        let lastJob=health.activeJobId;
+        try{lastJob ||= localStorage.getItem('paperdoc_active_job');}catch{}
+        if (lastJob) {
+          this.restoringJob=!health.activeJobId;
           this.working = true;
-          this.startPolling(health.activeJobId);
+          this.startPolling(lastJob);
         }
       },
       error: response => {
         this.healthLoading = false;
         this.healthError = response.status === 403
           ? 'Backend rejected this website origin. Check FRONTEND_ORIGIN on Render.'
-          : `Backend connection unavailable${response.status ? ' (HTTP ' + response.status + ')' : ''}. Could not check API key configuration. Retry the connection or check Render runtime logs.`;
+          : 'The video service is taking longer to respond. Your keys have not been checked yet. Retry connection in a moment.';
       }
     });
   }
@@ -318,25 +353,26 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   allConfigured(): boolean {
+    if(!this.health?.ok)return false;
     const gemini =
-      this.settings['GEMINI_API_KEY'] ||
-      this.settings['GEMINI_API_KEY_2'] || this.settings['GEMINI_API_KEY_3'] ||
-      this.health?.providers.gemini;
+      this.settings['GEMINI_API_KEY']?.trim() ||
+      this.settings['GEMINI_API_KEY_2']?.trim() || this.settings['GEMINI_API_KEY_3']?.trim() ||
+      this.health?.providers?.gemini;
 
     const cartesia =
-      this.settings['CARTESIA_API_KEY'] ||
-      this.health?.providers.cartesia;
+      this.settings['CARTESIA_API_KEY']?.trim() ||
+      this.health?.providers?.cartesia;
 
-    const voice=this.voiceProvider==='fish'?(this.settings['FISH_API_KEY']||this.health?.providers.fish):this.voiceProvider==='heygen'?(this.settings['HEYGEN_API_KEY']||this.health?.providers.heygen):cartesia;
+    const voice=this.voiceProvider==='fish'?(this.settings['FISH_API_KEY']?.trim()||this.health?.providers?.fish):this.voiceProvider==='heygen'?(this.settings['HEYGEN_API_KEY']?.trim()||this.health?.providers?.heygen):cartesia;
     return !!(gemini && voice);
   }
 
   get missingProviderMessage(): string {
     const missing: string[] = [];
-    if (!['GEMINI_API_KEY', 'GEMINI_API_KEY_2', 'GEMINI_API_KEY_3'].some(key => this.settings[key]?.trim()) && !this.health?.providers.gemini) missing.push('Gemini');
-    const voice = this.voiceProvider === 'fish' ? ['FISH_API_KEY', 'Fish Audio', this.health?.providers.fish] as const
-      : this.voiceProvider === 'heygen' ? ['HEYGEN_API_KEY', 'HeyGen', this.health?.providers.heygen] as const
-      : ['CARTESIA_API_KEY', 'Cartesia', this.health?.providers.cartesia] as const;
+    if (!['GEMINI_API_KEY', 'GEMINI_API_KEY_2', 'GEMINI_API_KEY_3'].some(key => this.settings[key]?.trim()) && !this.health?.providers?.gemini) missing.push('Gemini');
+    const voice = this.voiceProvider === 'fish' ? ['FISH_API_KEY', 'Fish Audio', this.health?.providers?.fish] as const
+      : this.voiceProvider === 'heygen' ? ['HEYGEN_API_KEY', 'HeyGen', this.health?.providers?.heygen] as const
+      : ['CARTESIA_API_KEY', 'Cartesia', this.health?.providers?.cartesia] as const;
     if (!this.settings[voice[0]]?.trim() && !voice[2]) missing.push(voice[1]);
     return `Backend connected. Missing key configuration: ${missing.join(' and ')}. Add it in API Settings or the backend environment, then restart the backend and refresh.`;
   }
@@ -364,6 +400,7 @@ export class AppComponent implements OnInit, OnDestroy {
       '/api/jobs',
       {
         topic: this.topic,
+        previewFirst: !demo,
         recentTopics:this.recentTopics(),
         factMode: this.factMode,
         voiceAccent: this.voiceAccent,
@@ -384,6 +421,7 @@ export class AppComponent implements OnInit, OnDestroy {
     ).subscribe({
       next: job => {
         this.job = job;
+        try{localStorage.setItem('paperdoc_active_job',job.id);}catch{}
         this.startPolling(job.id);
       },
 
@@ -413,6 +451,21 @@ export class AppComponent implements OnInit, OnDestroy {
     const selected=(job.selectedTopics||[]).filter(t=>typeof t==='string'&&!!t.trim()&&t.length<=140);
     if(!selected.length)return;
     try{localStorage.setItem('paperdoc_recent_topics',JSON.stringify([...new Set([...this.recentTopics(),...selected])].slice(-100)));}catch{/* Backend history still protects this instance. */}
+  }
+
+  newStory(): void {
+    this.topic='';
+    this.generate(false);
+  }
+
+  approveStory(optionIndex?:number): void {
+    if(this.working || !this.job?.preview || !['awaiting_approval','failed'].includes(this.job.status))return;
+    this.working=true;this.error='';
+    this.http.post<Job>('/api/jobs/'+this.job.id+'/approve',{providerKeys:{...this.settings},...(optionIndex===undefined?{}:{optionIndex})})
+      .pipe(timeout(20000)).subscribe({
+        next:job=>{this.job=job;this.startPolling(job.id);},
+        error:response=>{this.working=false;this.error=response.error?.error||'Could not approve story. Please retry.';}
+      });
   }
 
   cancelGeneration(): void {
@@ -456,7 +509,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
     this.pollTimer = setInterval(
       () => this.refresh(id),
-      1500
+      2500
     );
 
     this.refresh(id);
@@ -482,6 +535,7 @@ export class AppComponent implements OnInit, OnDestroy {
       timeout(12000)
     ).subscribe({
       next: job => {
+        this.restoringJob=false;
         this.polling = false;
         this.disconnectCount = 0;
         this.missingJobCount = 0;
@@ -507,6 +561,11 @@ export class AppComponent implements OnInit, OnDestroy {
         this.polling = false;
 
         if (response.status === 404) {
+          if(this.restoringJob&&!this.job){
+            this.restoringJob=false;this.working=false;this.stopPolling();this.error='';
+            try{localStorage.removeItem('paperdoc_active_job');}catch{}
+            return;
+          }
           const restarted=!!this.job?.instanceId && !!response.error?.instanceId &&
             this.job.instanceId !== response.error.instanceId;
           // Deploy routing can briefly send polling to a different instance.
@@ -517,6 +576,7 @@ export class AppComponent implements OnInit, OnDestroy {
           }
           this.working = false;
           this.stopPolling();
+          try{localStorage.removeItem('paperdoc_active_job');}catch{}
 
           this.error = restarted
             ? 'The backend instance changed and this job is unavailable. Check Render Events for a restart or deploy, then generate again.'
