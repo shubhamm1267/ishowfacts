@@ -18,6 +18,14 @@ test('fuzzy metadata tolerates typos but rejects unrelated titles and placeholde
  assert.equal(metadataReview({title:'123456'},{subjectEntity:'penguin'},'Animals').approved,false);
  assert.equal(hashDistance('0000000000000000','000000000000000f'),4);
  assert.equal(hashDistance('invalid','invalid'),64);
+ assert.equal(metadataReview({title:'Ernő Rubik portrait'},{subjectEntity:'Erno Rubik'},"Rubik's Cube").approved,true);
+ const scene={subjectEntity:'vintage cotton candy machine',visualRole:'context'};
+ const media={title:'Close up on hand making cotton candy'};
+ assert.equal(metadataReview(media,scene,'Cotton candy').approved,true);
+ assert.equal(metadataReview(media,scene,'Cotton candy').contextTopicMatch,true);
+ assert.equal(metadataReview(media,{...scene,visualRole:'evidence'},'Cotton candy').approved,false);
+ assert.equal(metadataReview(media,{...scene,pointOut:{target:'vintage machine'}},'Cotton candy').approved,false);
+ assert.equal(metadataReview({title:'Cotton candy stall'},{...scene,subjectEntity:'historical inventor portrait'},'Cotton candy').approved,false);
 });
 
 test('local source checks reject blank/chroma/duplicates without any AI request',{timeout:45000},async()=>{

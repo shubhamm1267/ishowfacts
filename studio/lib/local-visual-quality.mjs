@@ -2,7 +2,7 @@ import Fuse from 'fuse.js';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 
-const words=text=>(String(text||'').toLowerCase().match(/[a-z0-9]+/g)||[])
+const words=text=>(String(text||'').normalize('NFKD').replace(/\p{M}/gu,'').toLowerCase().match(/[a-z0-9]+/g)||[])
  .filter(w=>w.length>2&&!['the','and','with','for','from','video','photo','stock','close','shot','footage'].includes(w));
 const stem=word=>word.replace(/(?:es|s)$/,'');
 export function metadataScore(title,subject){
@@ -16,9 +16,17 @@ export function metadataReview(media,scene,topic){
  // Search queries are not evidence: only actual provider metadata is compared.
  const title=[media?.title,...(Array.isArray(media?.tags)?media.tags:[])].filter(Boolean).join(' ');
  const subject=scene.subjectEntity||scene.visualQuery||topic;
- const score=metadataScore(title,subject);
+ const exactScore=metadataScore(title,subject);
+ // An already source-reviewed context brief may illustrate a historical or
+ // invisible explanation with the same topic object. It is not proof of the
+ // described historical model/action. Never widen a different entity or a
+ // pointed-at/evidence shot to the overall topic.
+ const topicWords=words(topic),subjectWords=words(subject);
+ const sameTopic=topicWords.length>0&&topicWords.every(w=>subjectWords.some(s=>stem(s)===stem(w)));
+ const contextScore=scene.visualRole==='context'&&!scene.pointOut&&!scene.shownActionRequired&&sameTopic?metadataScore(title,topic):0;
+ const score=Math.max(exactScore,contextScore);
  const prohibited=/\b(?:green[ -]?screen|blue[ -]?screen|chroma[ -]?key|mockup|placeholder|watermark|template|ai[ -]generated|cartoon|illustration|animation|3d[ -]?render|subtitles?|logo)\b/i.test(title);
- return {approved:!prohibited&&score>=.6,score,subject,title,method:'fuzzy-metadata',semanticIdentityChecked:false};
+ return {approved:!prohibited&&score>=.6,score,exactScore,contextTopicMatch:contextScore>exactScore,subject,title,method:'fuzzy-metadata',semanticIdentityChecked:false};
 }
 export function hashDistance(a,b){
  if(!/^[a-f0-9]{16}$/i.test(a||'')||!/^[a-f0-9]{16}$/i.test(b||''))return 64;

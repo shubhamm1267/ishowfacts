@@ -167,6 +167,20 @@ test('automatic Gemini selection retries recent topics and sends the required ca
  }finally{globalThis.fetch=saved;}
 });
 
+test('automatic selection includes older used topics and names rejected suggestions on retry',async()=>{
+ const saved=globalThis.fetch;let calls=0;
+ const history=[{topic:'Voynich manuscript',category:'mystery'},...Array.from({length:70},(_,i)=>({topic:'Archived subject '+i,category:'nature'}))];
+ try{
+  globalThis.fetch=async(url,init)=>{
+   const prompt=JSON.parse(init.body).contents[0].parts[0].text;
+   assert.match(prompt,/Full used topic names/);assert.match(prompt,/Voynich manuscript/);
+   if(calls)assert.match(prompt,/Already rejected suggestions in THIS request: \["Voynich manuscript"\]/);
+   return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({topic:++calls===1?'Voynich manuscript':'Zipper'})}]}}]});
+  };
+  assert.equal(await runWithProviders({GEMINI_API_KEY:'test'},()=>chooseTopic({history})),'Zipper');assert.equal(calls,2);
+ }finally{globalThis.fetch=saved;}
+});
+
 test('random facts research keeps three independent sources and rejects duplicate topics',async()=>{
  const saved=globalThis.fetch;
  let topics=['Popcorn','Giraffe','Rainbow'];

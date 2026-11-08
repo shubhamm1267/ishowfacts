@@ -828,6 +828,13 @@ async function runJob(job, input, approved = null) {
       ({topic,source,episode}=approved);
       if(approved.storySnapshot){
         const snapshot=approved.storySnapshot,option=snapshot.options[approved.optionIndex];
+        if(option.reviewed&&approved.retryMedia&&input.visualStyle==='reference-news'){
+          await checkpoint(job,'Reviewing unavailable media briefs for the saved script',23);
+          const contracts=await prepareMediaContracts(episode,source);
+          await writeFile(join(folder,'media-contracts.json'),JSON.stringify(contracts,null,2));
+          option.episode=episode;
+          await writeFile(join(folder,'approved-story.json'),JSON.stringify(snapshot));
+        }
         if(!option.reviewed){
           const before=spokenPreview(episode);
           episode=await finalizeEpisode(episode,source,{requestedTopic:topic,seconds:input.seconds,hookContext:snapshot.hookContext,
@@ -2187,7 +2194,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
             let selected=saved;
             if(Array.isArray(saved.options)){
               if(!Number.isInteger(body.optionIndex)||body.optionIndex<0||body.optionIndex>=saved.options.length){sendJSON(res,400,{error:'Choose one of the displayed scripts.'});return;}
-              selected={...saved,episode:saved.options[body.optionIndex].episode,optionIndex:body.optionIndex,storySnapshot:saved};
+              selected={...saved,episode:saved.options[body.optionIndex].episode,optionIndex:body.optionIndex,storySnapshot:saved,retryMedia:job.status==='failed'};
               job.preview=previewEpisode(selected.episode,saved.topic,body.optionIndex);
             }
             const input=validateInput({...saved.input,providerKeys:body.providerKeys||{},previewFirst:false});
