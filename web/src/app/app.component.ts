@@ -2,7 +2,7 @@ import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { timeout } from 'rxjs';
+import { timeout, retry, timer, Subscription } from 'rxjs';
 
 interface Job {
   instanceId?: string;
@@ -139,8 +139,8 @@ interface Health {
           <input id="channelLogo" type="file" accept="image/png,image/jpeg,image/webp" (change)="selectLogo($event)" [disabled]="working || logoLoading">
           <p class="config">Logo stays at the upper left below the yellow line, at 50% opacity, like the reference.</p>
           <div *ngIf="logoDataUrl" class="logo-preview"><img [src]="logoDataUrl" alt="Your channel logo preview" width="54" height="54" style="object-fit:contain"><button type="button" class="secondary" (click)="removeLogo()" [disabled]="working">REMOVE LOGO</button></div>
-          <label for="mediaMode">VISUAL MEDIA</label><select id="mediaMode" [(ngModel)]="mediaMode"><option value="mixed">Video first · photo fallback</option><option *ngIf="visualStyle === 'paper'" value="photos">Photos only</option></select>
-          <p class="config" *ngIf="visualStyle === 'reference-news'">{{ mediaPlanLabel }} · clean cuts timed to narration.</p>
+          <label for="mediaMode">VISUAL MEDIA</label><select id="mediaMode" [(ngModel)]="mediaMode"><option value="mixed">Instagram first - stock/photo fallback</option><option *ngIf="visualStyle === 'paper'" value="photos">Photos only</option></select>
+          <p class="config" *ngIf="visualStyle === 'reference-news'">{{ mediaPlanLabel }} · clean cuts timed to narration; Instagram sources first.</p>
           <label for="voiceProvider">VOICE PROVIDER</label><select id="voiceProvider" [(ngModel)]="voiceProvider"><option value="fish">Fish Audio</option><option value="heygen">HeyGen · Yash</option><option value="cartesia">Cartesia</option></select>
           <label for="factMode">FACT SELECTION</label><select id="factMode" [(ngModel)]="factMode" (ngModelChange)="onFactModeChange()"><option value="topic">1 fact story · one topic</option><option value="random">3 facts · three different topics</option></select>
           <p class="config" *ngIf="factMode === 'random'">Three surprising topics, each researched separately. Desi hooks, quick reveals and light humor.</p>
@@ -156,7 +156,10 @@ interface Health {
           <div class="stack"><span>WHAT'S INSIDE</span><div><span class="chip">✦ Gemini Lite</span><span class="chip">◉ Cartesia</span><span class="chip">♫ Freesound CC0</span><span class="chip">▣ Commons</span><span class="chip">✂ Original JSON Cutout Engine</span></div></div>
           <button class="primary" (click)="generate(false)" [disabled]="working || logoLoading || !allConfigured()"><span>{{ working ? 'GENERATION IN PROGRESS' : '✦  GENERATE VIDEO' }}</span><span>↗</span></button>
           <button *ngIf="health?.demo" class="secondary" (click)="generate(true)" [disabled]="working">TRY OFFLINE RENDER DEMO (no AI/voice)</button>
-          <p *ngIf="!allConfigured()" class="config">Enter Gemini and the selected voice provider's key in API Settings, or configure them on the backend.</p>
+          <p *ngIf="healthLoading" class="config">Connecting to the backend to check configured providers. A sleeping service can take a moment...</p>
+          <p *ngIf="healthError" class="error">{{ healthError }}</p>
+          <button *ngIf="!health && !healthLoading" class="secondary" (click)="checkBackend()">RETRY BACKEND CONNECTION</button>
+          <p *ngIf="health && !allConfigured()" class="config">{{ missingProviderMessage }}</p>
           <p *ngIf="error" class="error">{{ error }}</p>
         </section>
 
@@ -173,7 +176,7 @@ interface Health {
           <div *ngIf="job?.warnings?.length" class="warnings"><strong>Asset notes</strong><p *ngFor="let w of job!.warnings">{{ w }}</p></div>
         </section>
       </main>
-      <footer><span>Stock: <a href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Pexels</a> ? <a href="https://coverr.co" target="_blank" rel="noopener noreferrer">Coverr</a></span><span>{{ visualStyle === 'reference-news' ? '1080 × 1440 · 3:4 REFERENCE' : '1080 × 1920 · PAPER-DOC' }} · CC ATTRIBUTIONS SAVED</span></footer>
+      <footer><span>Footage: <a href="https://www.instagram.com" target="_blank" rel="noopener noreferrer">Instagram</a> / <a href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Pexels</a> ? <a href="https://coverr.co" target="_blank" rel="noopener noreferrer">Coverr</a></span><span>{{ visualStyle === 'reference-news' ? '1080 × 1440 · 3:4 REFERENCE' : '1080 × 1920 · PAPER-DOC' }} · SOURCE DETAILS SAVED</span></footer>
     </div>
   `,
 })
@@ -187,6 +190,9 @@ export class AppComponent implements OnInit, OnDestroy {
   cancelling = false;
 
   health: Health | null = null;
+  healthLoading = false;
+  healthError = '';
+  private healthRequest?: Subscription;
   job: Job | null = null;
 
   topic = '';
@@ -209,9 +215,8 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   get mediaPlanLabel(): string {
-    const extra=Math.min(2,Math.max(0,Math.ceil((this.seconds-30)/10)));
-    const shots=this.seconds>50?Math.min(20,Math.ceil(this.seconds/5)):5+2*extra;
-    return `${shots} shots · video clips first, images only if footage is unavailable`;
+    const shots=this.seconds>50?Math.min(20,Math.ceil(this.seconds/5)):Math.max(6,Math.ceil(this.seconds/3.5));
+    return `${shots} shots · Instagram first, stock clips then images when needed`;
   }
 
   error = '';
@@ -237,24 +242,40 @@ export class AppComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.loadSettings();
+    this.checkBackend();
+  }
 
-    this.http.get<Health>('/api/health').subscribe({
+  checkBackend(): void {
+    if (this.healthLoading) return;
+    this.healthLoading = true;
+    this.healthError = '';
+    this.healthRequest = this.http.get<Health>('/api/health').pipe(
+      timeout(35000),
+      retry({count: 2, delay: (response, attempt) => {
+        if (response.status && ![408, 429, 500, 502, 503, 504].includes(response.status)) throw response;
+        return timer(attempt * 2000);
+      }})
+    ).subscribe({
       next: health => {
         this.health = health;
+        this.healthLoading = false;
 
         if (health.activeJobId) {
           this.working = true;
           this.startPolling(health.activeJobId);
         }
       },
-      error: () => {
-        this.error =
-          'Backend connection unavailable. Check Render deployment.';
+      error: response => {
+        this.healthLoading = false;
+        this.healthError = response.status === 403
+          ? 'Backend rejected this website origin. Check FRONTEND_ORIGIN on Render.'
+          : `Backend connection unavailable${response.status ? ' (HTTP ' + response.status + ')' : ''}. Could not check API key configuration. Retry the connection or check Render runtime logs.`;
       }
     });
   }
 
   ngOnDestroy(): void {
+    this.healthRequest?.unsubscribe();
     this.stopPolling();
   }
 
@@ -308,6 +329,16 @@ export class AppComponent implements OnInit, OnDestroy {
 
     const voice=this.voiceProvider==='fish'?(this.settings['FISH_API_KEY']||this.health?.providers.fish):this.voiceProvider==='heygen'?(this.settings['HEYGEN_API_KEY']||this.health?.providers.heygen):cartesia;
     return !!(gemini && voice);
+  }
+
+  get missingProviderMessage(): string {
+    const missing: string[] = [];
+    if (!['GEMINI_API_KEY', 'GEMINI_API_KEY_2', 'GEMINI_API_KEY_3'].some(key => this.settings[key]?.trim()) && !this.health?.providers.gemini) missing.push('Gemini');
+    const voice = this.voiceProvider === 'fish' ? ['FISH_API_KEY', 'Fish Audio', this.health?.providers.fish] as const
+      : this.voiceProvider === 'heygen' ? ['HEYGEN_API_KEY', 'HeyGen', this.health?.providers.heygen] as const
+      : ['CARTESIA_API_KEY', 'Cartesia', this.health?.providers.cartesia] as const;
+    if (!this.settings[voice[0]]?.trim() && !voice[2]) missing.push(voice[1]);
+    return `Backend connected. Missing key configuration: ${missing.join(' and ')}. Add it in API Settings or the backend environment, then restart the backend and refresh.`;
   }
 
   generate(demo: boolean): void {

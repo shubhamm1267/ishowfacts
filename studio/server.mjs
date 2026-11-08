@@ -16,7 +16,8 @@ import {
 import { createReadStream,readFileSync } from 'node:fs';
 import {totalmem} from 'node:os';
 import { spawn } from 'node:child_process';
-import { stockVideo,stockPhoto,createStockSession,createStockMediaCache,prefetchStockVideo,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
+import { stockVideo,stockPhoto,createStockSession,createStockMediaCache,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
+import {createInstagramProvider} from './lib/instagram-video.mjs';
 import { preparePointerAssets, prepareHeadlineAssets, prepareOverlayTextAssets, normalizeHookTitle } from './lib/reference-style.mjs';
 import { prepareExplainers } from './lib/explainer.mjs';
 import {heygenVoice,heygenPerformance,NATURAL_SPEECH_TRIM,DEFAULT_HEYGEN_VOICE,HEYGEN_FREE_MODEL,heygenModel,heygenSpeechMode,validateHeygenSettings} from './lib/heygen.mjs';
@@ -430,7 +431,7 @@ export function validateLogoUpload(value){
 
 // Executes Python and FFmpeg with a configurable timeout.
 const limitProcess=createProcessLimiter(resources.processConcurrency);
-export function processTool(command, args, onText) {
+export function processTool(command, args, onText, {timeoutMs: deadline} = {}) {
   // FFmpeg otherwise sizes its thread pools from the host CPU count, which
   // can greatly exceed the memory/CPU allocation of a small Render container.
   if(/(?:^|[\\/])ffmpeg(?:\.exe)?$/i.test(command))
@@ -448,7 +449,7 @@ export function processTool(command, args, onText) {
       ? Math.max(1, Math.min(180, configuredMinutes))
       : 45;
 
-    const timeoutMs = timeoutMinutes * 60 * 1000;
+    const timeoutMs = Number.isFinite(deadline) ? Math.max(1000,Math.min(timeoutMinutes*60000,deadline)) : timeoutMinutes * 60 * 1000;
 
     let log = '';
     let settled = false;
@@ -532,7 +533,7 @@ export function processTool(command, args, onText) {
       if (timedOut) {
         finish(
           Error(
-            `${command} timed out after ${timeoutMinutes} minutes`
+            `${command} timed out after ${Math.round(timeoutMs / 1000)} seconds`
           )
         );
         return;
@@ -1052,13 +1053,9 @@ async function runJob(job, input) {
     );
 
     const stockSession=createStockSession({cache:stockMediaCache});
+    const instagram=createInstagramProvider({run:processTool,python:process.env.PYTHON||'python3',root:ROOT});
     const mediaLookup=(key,operation)=>stockLookup(stockSession,key,operation);
-    // Metadata-only searches overlap voice generation/audit. Actual HD acquisition
-    // and frame/crop checks still wait for the final measured narration timing.
-    const stockQueries=[...new Set(episode.scenes.filter(scene=>scene.visual==='video').map(scene=>mediaVideoQuery(scene,source.articles?.[scene.factIndex]||source,topic)))];
-    const stockPrefetch=!input.demo&&input.mediaMode!=='photos'&&process.env.ENABLE_STOCK_VIDEO!=='0'
-      ?runSceneWorkers(stockQueries.length,2,i=>prefetchStockVideo(stockQueries[i],{session:stockSession})).catch(()=>[])
-      :Promise.resolve();
+    // Stock searches begin only after the primary Instagram lookup falls back.
 
     await checkpoint(
       job,
@@ -1127,7 +1124,7 @@ async function runJob(job, input) {
     let visualPass=0;
 
     const prepareSceneMedia = async i => {
-      job.stage=`Checking licensed visual ${i+1}/${episode.scenes.length}`;
+      job.stage=`Checking matching visual ${i+1}/${episode.scenes.length}`;
       const dest = join(
         assets,
         `image_${i}.jpg`
@@ -1141,6 +1138,7 @@ async function runJob(job, input) {
           videoReservations++;
           try {
             const clip = await stockVideo(mediaVideoQuery(scene,sceneSource,topic), join(assets, `clip_${i}.mp4`), {
+              instagram,
               used: usedImages,
               session:stockSession,
               subject:scene.subjectEntity||sceneSource.title||topic,
@@ -1148,10 +1146,12 @@ async function runJob(job, input) {
               creditPlacement:'description',
               inspect: async media => {
                 const probe = JSON.parse(await processTool('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
-                  '-show_entries', 'stream=width,height', '-of', 'json', media.file]));
+                  '-show_entries', 'stream=width,height:format=duration', '-of', 'json', media.file]));
                 const dimensions = probe.streams?.[0];
-                if (!(Math.min(dimensions?.width||0,dimensions?.height||0)>=1080)) return null;
-                const frames = join(assets, `clip_frames_${i}`);
+                const social=media.provider==='Instagram';
+                if (!(Math.min(dimensions?.width||0,dimensions?.height||0)>=(social?640:1080))) return null;
+                if(social&&Number(probe.format?.duration)<narration.timing[i].duration)return null;
+                const frames = join(assets, `clip_frames_${i}_${randomUUID()}`);
                 await mkdir(frames, { recursive: true });
                 const fps = clamp(Number(process.env.RENDER_FPS) || 24, 8, 60);
                 const seconds = narration.timing[i].duration + .5;
@@ -1161,7 +1161,7 @@ async function runJob(job, input) {
                 const focusImages=reviewPoints.map((_,index)=>join(frames,`review-${index}.jpg`));
                 // Decode once for all three review timestamps instead of
                 // launching three competing decoders for the same clip.
-                await processTool('ffmpeg',['-v','error','-y','-stream_loop','-1','-i',media.file,
+                await processTool('ffmpeg',['-v','error','-y',...(social?[]:['-stream_loop','-1']),'-i',media.file,
                   ...reviewPoints.flatMap((fraction,index)=>[
                     '-ss',String(narration.timing[i].duration*fraction),'-frames:v','1','-an',
                     '-vf','scale=1920:1920:force_original_aspect_ratio=decrease',focusImages[index]])]);
@@ -1175,7 +1175,7 @@ async function runJob(job, input) {
                   try { focus = await inspectFocus(focusImages, scene.pointOut.target, scene.narration); }
                   catch { job.warnings.push(`Scene ${i+1}: pointer location unverified; pointer omitted`); }
                 }
-                await processTool('ffmpeg', ['-v', 'error', '-y', '-stream_loop', '-1', '-i', media.file,
+                await processTool('ffmpeg', ['-v', 'error', '-y', ...(social?[]:['-stream_loop','-1']), '-i', media.file,
                   '-t', String(seconds), '-an', '-vf', `fps=${fps},scale=1920:1920:force_original_aspect_ratio=decrease`,
                   '-start_number', '0', join(frames, '%06d.jpg')]);
                 const files=(await readdir(frames)).filter(n=>/^\d{6}\.jpg$/.test(n));
@@ -1409,6 +1409,7 @@ async function runJob(job, input) {
           // a static JPEG, never an extra moving-video scene or a reused clip.
           if(!selected&&strictMedia&&visualPass>0){
             const stillSource=await stockVideo(mediaVideoQuery(scene,sceneSource,topic),join(assets,`photo_source_${i}.mp4`),{
+              instagram,
               used:usedImages,subject:scene.subjectEntity||sceneSource.title||topic,session:stockSession,creditPlacement:'description',
               inspect:async media=>{
                 const probe=JSON.parse(await processTool('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height:format=duration','-of','json',media.file]));
@@ -1545,7 +1546,6 @@ async function runJob(job, input) {
     }
 
 
-    await stockPrefetch;
     await writeFile(join(folder,'stock-performance.json'),JSON.stringify(stockSession.metrics,null,2));
     await writeFile(
       join(folder, 'episode.json'),

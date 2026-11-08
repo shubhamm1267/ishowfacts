@@ -38,10 +38,9 @@ export function createKeyScheduler(){
  }};
 }
 
-// Keep roughly five-second cuts as the requested film grows.
+// Aim for a fresh source every 3-4 seconds in the common single-fact format.
 export function mediaBudget(seconds){
- const extra=Math.min(2,Math.max(0,Math.ceil((Number(seconds)-30)/10)||0));
- const total=Number(seconds)>50?Math.min(20,Math.ceil(Number(seconds)/5)):5+2*extra;
+ const total=Number(seconds)>50?Math.min(20,Math.ceil(Number(seconds)/5)):Math.max(6,Math.ceil((Number(seconds)||25)/3.5));
  return {videos:total,photos:0,total,preferVideo:true};
 }
 

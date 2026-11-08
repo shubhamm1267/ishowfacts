@@ -225,8 +225,15 @@ export async function stockPhoto(query,dest,{used=new Set(),session=createStockS
  return null;
 }
 
-export async function stockVideo(query, dest, { used = new Set(), inspect,subject='',seconds=7,session=createStockSession() } = {}) {
+export async function stockVideo(query, dest, { used = new Set(), inspect,subject='',seconds=7,session=createStockSession(),instagram=null } = {}) {
   checkGenerationCancelled();
+  const searchStart=session.metrics.searches.length;
+  // Production supplies the bounded Instagram adapter. Tests/other clients can
+  // omit it; the stock fallback order and all source/crop gates stay intact.
+  if(instagram){
+    try{const primary=await instagram(query,dest,{used,inspect,subject,seconds,session});if(primary)return primary;}
+    catch(error){checkGenerationCancelled();session.metrics.searches.push({provider:'Instagram',query,status:'unavailable',error:String(error.message).slice(0,250),results:0,reviewed:0});}
+  }
   const account = providerValue('VECTEEZY_ACCOUNT_ID'), key = providerValue('VECTEEZY_API_KEY');
   const cacheKey=id=>scope()+':'+id;
   async function restore(id){
@@ -241,7 +248,7 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
   const relevance=title=>subjectWords.filter(w=>words(title).some(t=>forms(w).some(f=>forms(t).includes(f)))).length;
   const candidates = [];
   const failures=[];
-  const searches=[];
+  const searches=session.metrics.searches.slice(searchStart);
   const recordFailure=(provider,error)=>{checkGenerationCancelled();failures.push(`${provider}: ${error.message}`);};
   const searchRow=provider=>{
     const row={provider,query:normalizedQuery(query),status:'searching',results:0,candidates:0,reviewed:0,rejected:0};

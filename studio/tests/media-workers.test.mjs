@@ -26,24 +26,22 @@ test('process limiter caps concurrent child work and releases a failed slot for 
  assert.equal(await limit(async()=>42),42);
 });
 
-test('duration budget prefers video for every shot and increases cuts with length',()=>{
- for(const seconds of [20,25,30])assert.deepEqual(mediaBudget(seconds),{videos:5,photos:0,total:5,preferVideo:true});
- for(const seconds of [35,40])assert.deepEqual(mediaBudget(seconds),{videos:7,photos:0,total:7,preferVideo:true});
- for(const seconds of [45,50])assert.deepEqual(mediaBudget(seconds),{videos:9,photos:0,total:9,preferVideo:true});
- for(const [seconds,total] of [[90,18],[100,20]])assert.deepEqual(mediaBudget(seconds),{videos:total,photos:0,total,preferVideo:true});
+test('short-video budgets aim for distinct 3-4 second shots and grow with duration',()=>{
+ for(const [seconds,total] of [[20,6],[25,8],[30,9],[35,10],[40,12],[45,13],[50,15],[90,18],[100,20]])
+  assert.deepEqual(mediaBudget(seconds),{videos:total,photos:0,total,preferVideo:true});
 });
 
 test('assigning video-first shots preserves story order, narration and cut timing',()=>{
  const episode={scenes:Array.from({length:7},(_,i)=>({visual:'photo',narration:'Line '+i,start:i*5,duration:5,factIndex:Math.min(2,Math.floor(i/3))}))};
  const before=episode.scenes.map(({narration,start,duration,factIndex})=>({narration,start,duration,factIndex}));
- assignMediaTypes(episode,mediaBudget(35));
+ assignMediaTypes(episode,{videos:7,photos:0,total:7,preferVideo:true});
  assert.deepEqual(episode.scenes.map(s=>s.visual),Array(7).fill('video'));
  assert.deepEqual(episode.scenes.map(({narration,start,duration,factIndex})=>({narration,start,duration,factIndex})),before);
- assert.throws(()=>assignMediaTypes({scenes:[]},mediaBudget(25)),/5 shots/);
+ assert.throws(()=>assignMediaTypes({scenes:[]},mediaBudget(25)),/8 shots/);
 });
 
 test('video-first output accepts all clips or verified still fallbacks but never missing media',()=>{
- const budget=mediaBudget(25);
+ const budget={videos:5,photos:0,total:5,preferVideo:true};
  assert.deepEqual(mediaBudgetIssues([{video:true},{},{video:true},{},{video:true}],budget),[]);
  assert.deepEqual(mediaBudgetIssues([{video:true},{},{},{},{}],budget),[]);
  assert.deepEqual(mediaBudgetIssues(Array.from({length:5},()=>({video:true})),budget),[]);
