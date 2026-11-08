@@ -247,9 +247,10 @@ test('stream byte limit rejects oversized clips even without a content-length he
  }finally{globalThis.fetch=saved;if(previous===undefined)delete process.env.STOCK_VIDEO_MAX_MB;else process.env.STOCK_VIDEO_MAX_MB=previous;}
 });
 
-test('metadata rejects known low resolution and selects the smallest eligible HD file',()=>{
+test('metadata prefers HD but accepts lower resolution when HD is unavailable',()=>{
  const files=[{extension:'mp4',size_in_bytes:100,width:640,height:480},{extension:'mp4',size_in_bytes:4000,width:3840,height:2160},{extension:'mp4',size_in_bytes:2000,width:1920,height:1080}];
- assert.equal(stockFile(files),files[2]);assert.equal(stockFile([files[0]]),undefined);
+ assert.equal(stockFile(files),files[2]);assert.equal(stockFile([files[0]]),files[0]);
+ assert.equal(stockFile([{extension:'mp4',size_in_bytes:100,width:320,height:240}]),undefined);
  assert.ok(stockFile([{extension:'mp4',size_in_bytes:2000}]),'unknown dimensions still require the existing ffprobe check');
 });
 
@@ -267,11 +268,11 @@ test('photo searches share empty results within a job and retry failed lookups',
  }finally{globalThis.fetch=saved;}
 });
 
-test('Commons HD video fallback rejects incompatible licences/hosts and requires fresh frame approval',async()=>{
+test('Commons video fallback rejects incompatible licences/hosts and requires fresh frame approval',async()=>{
  const saved=globalThis.fetch,folder=await mkdtemp(join(tmpdir(),'commons-video-')),bytes=Buffer.alloc(2000);bytes.set([0x1a,0x45,0xdf,0xa3]);let downloads=0,reviews=0;
  const page=(title,license,url='https://upload.wikimedia.org/video.webm',width=1920)=>({title:'File:'+title+'.webm',imageinfo:[{url,width,height:1080,size:2000,mime:'video/webm',extmetadata:{LicenseShortName:{value:license},Artist:{value:'Test creator'},LicenseUrl:{value:'https://creativecommons.org/licenses/by/4.0/'}}}]});
  try{
-  globalThis.fetch=async address=>String(address).includes('api.php')?Response.json({query:{pages:{1:page('Restricted','CC BY-NC 4.0'),2:page('Other host','CC0','https://example.com/video.webm'),3:page('Low resolution','CC0',undefined,640),4:page('Actual waterfall','CC BY 4.0')}}}):(downloads++,new Response(bytes));
+  globalThis.fetch=async address=>String(address).includes('api.php')?Response.json({query:{pages:{1:page('Restricted','CC BY-NC 4.0'),2:page('Other host','CC0','https://example.com/video.webm'),3:page('Low resolution','CC0',undefined,240),4:page('Actual waterfall','CC BY 4.0')}}}):(downloads++,new Response(bytes));
   const result=await commonsVideo('waterfall',join(folder,'clip.mp4'),{inspect:async()=>{reviews++;return{verified:true};}});
   assert.equal(result.provider,'Wikimedia Commons');assert.equal(result.requiresAttribution,true);assert.match(result.attribution,/Test creator/);assert.equal(downloads,1);assert.equal(reviews,1);
   assert.deepEqual(await readFile(join(folder,'clip.mp4')),bytes);

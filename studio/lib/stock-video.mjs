@@ -1,4 +1,5 @@
 import {metadataScore} from './local-visual-quality.mjs';
+import {usableVideoDimensions,preferredVideoFile} from './video-resolution.mjs';
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat,writeFile } from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
@@ -123,7 +124,7 @@ export async function topicFootageAvailability(topic,{session=createStockSession
  const match=title=>terms.length&&terms.every(w=>String(title||'').toLowerCase().includes(w.replace(/s$/,'')))&&!syntheticStock(title)&&!mediaTitleMismatch(title,topic);
  const operations=[];
  if(providerValue('VECTEEZY_API_KEY'))operations.push((async()=>{try{const d=await vecteezySearch(topic,session);return {provider:'Vecteezy',returned:(d?.resources||[]).length,results:(d?.resources||[]).filter(r=>r.content_type==='video'&&match(r.title)&&stockFile(r.file_metadata?.available_file_types||[])).length};}catch{checkGenerationCancelled();return {provider:'Vecteezy',unavailable:true};}})());
- if(providerValue('PEXELS_API_KEY'))operations.push((async()=>{try{const u=new URL('https://api.pexels.com/v1/videos/search');u.searchParams.set('query',topic);u.searchParams.set('per_page','12');const d=await(await request(u,{Authorization:providerValue('PEXELS_API_KEY')},6000)).json();return {provider:'Pexels',returned:(d.videos||[]).length,results:(d.videos||[]).filter(r=>match(r.url?.replaceAll('-',' '))&&(r.video_files||[]).some(f=>Math.min(f.width||0,f.height||0)>=1080)).length};}catch{checkGenerationCancelled();return {provider:'Pexels',unavailable:true};}})());
+ if(providerValue('PEXELS_API_KEY'))operations.push((async()=>{try{const u=new URL('https://api.pexels.com/v1/videos/search');u.searchParams.set('query',topic);u.searchParams.set('per_page','12');const d=await(await request(u,{Authorization:providerValue('PEXELS_API_KEY')},6000)).json();return {provider:'Pexels',returned:(d.videos||[]).length,results:(d.videos||[]).filter(r=>match(r.url?.replaceAll('-',' '))&&(r.video_files||[]).some(f=>usableVideoDimensions(f.width,f.height))).length};}catch{checkGenerationCancelled();return {provider:'Pexels',unavailable:true};}})());
  reports.push(...await Promise.all(operations));
  // A provider outage is uncertainty, never evidence that a subject has no footage.
  return {available:reports.some(r=>r.results>0)?true:!operations.length||reports.some(r=>r.unavailable||r.returned>0)?null:false,reports,metadataOnly:true,candidates:[]};
@@ -138,8 +139,8 @@ export async function prefetchStockVideo(query,{session}){
 
 export function stockFile(files){
  return files.filter(f=>['mp4','mov'].includes(f.extension)&&f.size_in_bytes>0&&f.size_in_bytes<=MAX()&&
-  (!(Number(f.width)>0&&Number(f.height)>0)||Math.min(Number(f.width),Number(f.height))>=1080))
-  .sort((a,b)=>a.size_in_bytes-b.size_in_bytes)[0];
+  (!(Number(f.width)>0&&Number(f.height)>0)||usableVideoDimensions(f.width,f.height)))
+  .sort(preferredVideoFile)[0];
 }
 
 async function request(url, headers = {}, timeoutMs = 15_000, method = 'GET') {
@@ -249,13 +250,13 @@ export async function stockPhoto(query,dest,{used=new Set(),session=createStockS
  return null;
 }
 
-export async function stockVideo(query, dest, { used = new Set(), inspect,subject='',seconds=7,session=createStockSession(),instagram=null } = {}) {
+export async function stockVideo(query, dest, { used = new Set(), inspect,subject='',scene,topic='',seconds=7,session=createStockSession(),instagram=null } = {}) {
   checkGenerationCancelled();
   const searchStart=session.metrics.searches.length;
   // Production supplies the bounded Instagram adapter. Tests/other clients can
   // omit it; the stock fallback order and all source/crop gates stay intact.
   if(instagram){
-    try{const primary=await instagram(query,dest,{used,inspect,subject,seconds,session});if(primary)return primary;}
+    try{const primary=await instagram(query,dest,{used,inspect,subject,scene,topic,seconds,session});if(primary)return primary;}
     catch(error){checkGenerationCancelled();session.metrics.searches.push({provider:'Instagram',query,status:'unavailable',error:String(error.message).slice(0,250),results:0,reviewed:0});}
   }
   const account = providerValue('VECTEEZY_ACCOUNT_ID'), key = providerValue('VECTEEZY_API_KEY');
@@ -394,8 +395,8 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
      if(used.has(id)||row.is_ai_generated===true||row.is_premium===true||row.sponsored===true)continue;
      const title=stockTitle(row);
      if(syntheticStock(title)||mediaTitleMismatch(title,subject||query))continue;
-     const file=provider==='pexels'?(row.video_files||[]).filter(f=>f.file_type==='video/mp4'&&Math.min(f.width||0,f.height||0)>=1080).sort((a,b)=>a.width*a.height-b.width*b.height)[0]:null;
-     const link=provider==='pexels'?file?.link:Math.min(row.max_width||0,row.max_height||0)>=1080?row.urls?.mp4_download:null;
+     const file=provider==='pexels'?(row.video_files||[]).filter(f=>f.file_type==='video/mp4'&&usableVideoDimensions(f.width,f.height)).sort(preferredVideoFile)[0]:null;
+     const link=provider==='pexels'?file?.link:usableVideoDimensions(row.max_width,row.max_height)?row.urls?.mp4_download:null;
      if(!link)continue;
      candidates.push({id,acquire:async()=>{
       if(used.has(id))return null;used.add(id);
@@ -434,7 +435,7 @@ export async function commonsVideo(query,dest,{used=new Set(),inspect,subject=''
  let attempts=0;
  for(const page of pages){
   const info=page.imageinfo?.[0],id='commons-video:'+page.title;
-  if(!info||used.has(id)||!['video/webm','video/ogg','application/ogg','video/mp4'].includes(info.mime)||Math.min(info.width||0,info.height||0)<1080||!(info.size>1000&&info.size<=MAX())||syntheticStock(page.title)||mediaTitleMismatch(page.title,subject||query))continue;
+  if(!info||used.has(id)||!['video/webm','video/ogg','application/ogg','video/mp4'].includes(info.mime)||!usableVideoDimensions(info.width,info.height)||!(info.size>1000&&info.size<=MAX())||syntheticStock(page.title)||mediaTitleMismatch(page.title,subject||query))continue;
   const credit=licenseInfo(info.extmetadata);
   if(!credit.allowed)continue;
   let address;try{address=new URL(info.url);}catch{continue;}

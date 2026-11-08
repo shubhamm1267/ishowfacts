@@ -18,6 +18,8 @@ import {totalmem} from 'node:os';
 import { spawn } from 'node:child_process';
 import { stockVideo,stockPhoto,createStockSession,createStockMediaCache,topicFootageAvailability,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
 import {createInstagramProvider} from './lib/instagram-video.mjs';
+import {createNexoProvider} from './lib/nexo-video.mjs';
+import {usableVideoDimensions} from './lib/video-resolution.mjs';
 import { preparePointerAssets, prepareHeadlineAssets, prepareOverlayTextAssets, normalizeHookTitle } from './lib/reference-style.mjs';
 import { prepareExplainers } from './lib/explainer.mjs';
 import {heygenVoice,heygenPerformance,NATURAL_SPEECH_TRIM,DEFAULT_HEYGEN_VOICE,HEYGEN_FREE_MODEL,heygenModel,heygenSpeechMode,validateHeygenSettings} from './lib/heygen.mjs';
@@ -457,6 +459,7 @@ export function processTool(command, args, onText, {timeoutMs: deadline} = {}) {
     const timeoutMs = Number.isFinite(deadline) ? Math.max(1000,Math.min(timeoutMinutes*60000,deadline)) : timeoutMinutes * 60 * 1000;
 
     let log = '';
+    let stdout = '';
     let settled = false;
     let timedOut = false;
 
@@ -522,6 +525,7 @@ export function processTool(command, args, onText, {timeoutMs: deadline} = {}) {
 
       pipe.on('data', chunk => {
         log = (log + chunk).slice(-9000);
+        if(pipe===child.stdout)stdout=(stdout+chunk).slice(-1000000);
 
         if (typeof onText === 'function') {
           onText(chunk);
@@ -545,7 +549,7 @@ export function processTool(command, args, onText, {timeoutMs: deadline} = {}) {
       }
 
       if (code === 0) {
-        finish(null, log);
+        finish(null, stdout);
         return;
       }
 
@@ -1043,7 +1047,9 @@ async function runJob(job, input, approved = null) {
       let index=[];try{index=JSON.parse(await readFile(join(DIR,'data','instagram-footage.json'),'utf8'));}catch{}
       instagramCatalogue=[...index,...source.instagramCandidates];
     }
-    const instagram=createInstagramProvider({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,catalogue:instagramCatalogue});
+    const existingInstagram=createInstagramProvider({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,catalogue:instagramCatalogue});
+    const nexo=createNexoProvider({packageDirectory:process.env.NEXO_PACKAGE_DIR,run:processTool});
+    const instagram=nexo?async(...args)=>(await nexo(...args))||(await existingInstagram(...args)):existingInstagram;
     const mediaLookup=(key,operation)=>stockLookup(stockSession,key,operation);
     // Stock searches begin only after the primary Instagram lookup falls back.
 
@@ -1129,7 +1135,7 @@ async function runJob(job, input, approved = null) {
           videoReservations++;
           try {
             const clip = await stockVideo(mediaVideoQuery(scene,sceneSource,topic), join(assets, `clip_${i}.mp4`), {
-              instagram,
+              instagram,scene,topic,
               used: usedImages,
               session:stockSession,
               subject:scene.subjectEntity||sceneSource.title||topic,
@@ -1139,8 +1145,8 @@ async function runJob(job, input, approved = null) {
                 const probe = JSON.parse(await processTool('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
                   '-show_entries', 'stream=width,height:format=duration', '-of', 'json', media.file]));
                 const dimensions = probe.streams?.[0];
-                const social=media.provider==='Instagram';
-                if (!(Math.min(dimensions?.width||0,dimensions?.height||0)>=(social?640:1080))) return null;
+                const social=['Instagram','Pinterest / Nexo'].includes(media.provider);
+                if (!usableVideoDimensions(dimensions?.width,dimensions?.height)) return null;
                 if(social&&Number(probe.format?.duration)<narration.timing[i].duration)return null;
                 const frames = join(assets, `clip_frames_${i}_${randomUUID()}`);
                 await mkdir(frames, { recursive: true });
@@ -1362,12 +1368,12 @@ async function runJob(job, input, approved = null) {
           // a static JPEG, never an extra moving-video scene or a reused clip.
           if(!selected&&strictMedia&&visualPass>0){
             const stillSource=await stockVideo(mediaVideoQuery(scene,sceneSource,topic),join(assets,`photo_source_${i}.mp4`),{
-              instagram,
+              instagram,scene,topic,
               used:usedImages,subject:scene.subjectEntity||sceneSource.title||topic,session:stockSession,creditPlacement:'description',
               inspect:async media=>{
                 const probe=JSON.parse(await processTool('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height:format=duration','-of','json',media.file]));
                 const dimensions=probe.streams?.[0];
-                if(Math.min(dimensions?.width||0,dimensions?.height||0)<1080)return null;
+                if(!usableVideoDimensions(dimensions?.width,dimensions?.height))return null;
                 const stillAt=Math.min(1,Number(probe.format?.duration)/2||.5);
                 await processTool('ffmpeg',['-v','error','-y','-ss',String(stillAt),'-i',media.file,'-frames:v','1','-an','-q:v','2',dest]);
                 const framing=await verifyFraming([dest],scene,topic,`still-${i}-${randomUUID()}`,media);

@@ -26,7 +26,8 @@ export function metadataReview(media,scene,topic){
  const contextScore=scene.visualRole==='context'&&!scene.pointOut&&!scene.shownActionRequired&&sameTopic?metadataScore(title,topic):0;
  const score=Math.max(exactScore,contextScore);
  const prohibited=/\b(?:green[ -]?screen|blue[ -]?screen|chroma[ -]?key|mockup|placeholder|watermark|template|ai[ -]generated|cartoon|illustration|animation|3d[ -]?render|subtitles?|logo)\b/i.test(title);
- return {approved:!prohibited&&score>=.6,score,exactScore,contextTopicMatch:contextScore>exactScore,subject,title,method:'fuzzy-metadata',semanticIdentityChecked:false};
+ const topicPresent=!sameTopic||metadataScore(title,topic)>=.6;
+ return {approved:!prohibited&&topicPresent&&score>=.6,score,exactScore,contextTopicMatch:contextScore>exactScore,subject,title,method:'fuzzy-metadata',semanticIdentityChecked:false};
 }
 export function hashDistance(a,b){
  if(!/^[a-f0-9]{16}$/i.test(a||'')||!/^[a-f0-9]{16}$/i.test(b||''))return 64;
