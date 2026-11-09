@@ -131,4 +131,6 @@ def render_reference(reel, width, height, fps, silent, run, popen=None):
         listing.write_text('\n'.join(f"file '{p.name}'" for p in parts), encoding='utf8')
         run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '1', '-i', str(listing),
              '-map', '0:v:0', '-c:v', 'copy', str(silent)], check=True)
+    reel.render_metrics = {'mode': 'ffmpeg' if all(eligible) else 'mixed',
+                           'nativeScenes': sum(eligible), 'originalScenes': len(eligible)-sum(eligible)}
     return True

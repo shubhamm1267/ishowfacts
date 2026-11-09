@@ -61,7 +61,7 @@ export async function downloadPinterestExcerpt(url,dest,{run,seconds=12}={}){
  }finally{await rm(dir,{recursive:true,force:true});}
 }
 
-export function createNexoProvider({packageDirectory,run,search,download=downloadPinterestExcerpt,now=Date.now,budgetMs=120000,lookupMs=35000}={}){
+export function createNexoProvider({packageDirectory,run,search,download=downloadPinterestExcerpt,now=Date.now,budgetMs=120000,lookupMs=35000,sourcePolicy={}}={}){
  const require=createRequire(import.meta.url);
  if(!search){
   const axios=packageDirectory?require(join(packageDirectory,'node_modules/axios/dist/node/axios.cjs')):require('axios');
@@ -71,10 +71,14 @@ export function createNexoProvider({packageDirectory,run,search,download=downloa
  }
  const sessions=new WeakMap();
  return async(query,dest,{session,used,inspect,subject,scene,topic='',seconds=4})=>{
-  if(!sessions.has(session))sessions.set(session,{queries:new Map(),deadline:now()+budgetMs,rejected:new Map()});const state=sessions.get(session);
+  if(!sessions.has(session))sessions.set(session,{queries:new Map(),acquisitionMs:0,rejected:new Map()});const state=sessions.get(session);
   const row={provider:'Pinterest / Nexo',query,queries:[],status:'searching',results:0,candidates:0,reviewed:0,rejected:0};session.metrics.searches.push(row);
-  const start=now(),deadline=Math.min(state.deadline,start+lookupMs);
-  if(start>=deadline){row.status='budget exhausted';return null;}
+  const start=now();let acquisitionMs=0;
+  const exhausted=()=>state.acquisitionMs>=budgetMs||acquisitionMs>=lookupMs;
+  // CPU frame checks/encoding and time spent on other scenes must not expire
+  // Pinterest before later scenes get their first search. Charge only retrieval.
+  const retrieve=async operation=>{const began=now();try{return await operation();}finally{const elapsed=Math.max(0,now()-began);state.acquisitionMs+=elapsed;acquisitionMs+=elapsed;}};
+  if(exhausted()){row.status='budget exhausted';return null;}
   try{
    checkGenerationCancelled();
    const brief=scene||{subjectEntity:subject||query};
@@ -84,21 +88,21 @@ export function createNexoProvider({packageDirectory,run,search,download=downloa
    const title=p=>[p.title,p.description].filter(Boolean).join(' ').slice(0,500);
    const seen=new Set();
    for(const key of queries){
-    if(now()>=deadline||row.candidates>=4)break;
+    if(exhausted()||row.candidates>=4)break;
     row.queries.push(key);
-    if(!state.queries.has(key))state.queries.set(key,search(key+' video',40));
+    if(!state.queries.has(key))state.queries.set(key,retrieve(()=>search(key+' video',40)));
     const result=await state.queries.get(key);checkGenerationCancelled();
     if(!result.status){row.error=result.message||'Pinterest search failed';continue;}
     const pins=(result.data?.pins||[]).filter(p=>p.is_video&&pinterestMediaUrl(p.video_url));row.results+=pins.length;
-    const ranked=pins.map(pin=>({pin,review:metadataReview({title:title(pin)},brief,topic)}))
+    const ranked=pins.map(pin=>({pin,review:metadataReview({title:title(pin)},brief,topic,sourcePolicy)}))
      .filter(({pin,review})=>Object.values(pin.videos?.list||{}).some(v=>usableVideoDimensions(v.width,v.height))&&review.approved)
      .sort((a,b)=>b.review.score-a.review.score);
     for(const {pin} of ranked){
-    checkGenerationCancelled();if(now()>=deadline||row.candidates>=4)break;
+    checkGenerationCancelled();if(exhausted()||row.candidates>=4)break;
     const id='pinterest:'+createHash('sha256').update(pin.video_url).digest('hex');if(used.has(id)||rejected.has(id)||seen.has(id))continue;seen.add(id);used.add(id);row.candidates++;
     let accepted=false;
     try{
-     await rm(dest,{force:true});await download(pin.video_url,dest,{run,seconds:Math.max(4,seconds+.5)});
+     await rm(dest,{force:true});await retrieve(()=>download(pin.video_url,dest,{run,seconds:Math.max(4,seconds+.5)}));
      const item={id,file:dest,provider:'Pinterest / Nexo',source:pin.pin_url,title:title(pin),author:pin.uploader?.full_name||pin.uploader?.username||'Pinterest uploader',license:'Original creator rights; reuse permission not supplied by Pinterest',licenseUrl:pin.pin_url,rightsVerified:false,requiresAttribution:true};
      row.reviewed++;const prepared=await inspect(item);if(prepared){accepted=true;row.status='selected';return {...item,...prepared};}row.rejected++;rejected.add(id);
     }catch(e){checkGenerationCancelled();row.error=String(e.message).slice(0,250);}
@@ -107,6 +111,6 @@ export function createNexoProvider({packageDirectory,run,search,download=downloa
    }
    row.status='no verified match';return null;
   }catch(e){checkGenerationCancelled();row.status='unavailable';row.error=String(e.message).slice(0,250);return null;}
-  finally{row.seconds=Math.round((now()-start)/10)/100;}
+  finally{row.seconds=Math.round((now()-start)/10)/100;row.acquisitionSeconds=Math.round(acquisitionMs/10)/100;}
  };
 }

@@ -28,6 +28,15 @@ test('fuzzy metadata tolerates typos but rejects unrelated titles and placeholde
  assert.equal(metadataReview({title:'Cotton candy stall'},{...scene,subjectEntity:'historical inventor portrait'},'Cotton candy').approved,false);
 });
 
+test('accepted source text and contextual animations do not waive subject or evidence matching',()=>{
+ const policy={allowSourceText:true,allowStylized:true},scene={subjectEntity:'sloth',visualRole:'context'};
+ assert.equal(metadataReview({title:'Sloth animation with subtitles'},scene,'Sloth',policy).approved,true);
+ assert.equal(metadataReview({title:'Sloth animation with subtitles'},scene,'Sloth').approved,false);
+ assert.equal(metadataReview({title:'Penguin animation with subtitles'},scene,'Sloth',policy).approved,false);
+ assert.equal(metadataReview({title:'Sloth green screen mockup'},scene,'Sloth',policy).approved,false);
+ assert.equal(metadataReview({title:'Sloth animation'},{...scene,visualRole:'evidence'},'Sloth',policy).approved,false);
+});
+
 test('local source checks reject blank/chroma/duplicates without any AI request',{timeout:45000},async()=>{
  const folder=await mkdtemp(join(tmpdir(),'local-source-')),saved=globalThis.fetch;
  try{

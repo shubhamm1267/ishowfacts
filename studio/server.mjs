@@ -214,6 +214,7 @@ function safeJob(job) {
     category:job.category||null,
     size: job.size || [1080,1920],
     performance:timingSummary(job)||job.performance||null,
+    renderPerformance:job.renderPerformance||null,
     storyPreparationSeconds:job.storyPreparationSeconds||null,
     preview:job.preview||null,
     storyOptions:job.storyOptions||null,
@@ -1036,7 +1037,8 @@ async function runJob(job, input, approved = null) {
       instagramCatalogue=[...index,...source.instagramCandidates];
     }
     const existingInstagram=createInstagramProvider({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,catalogue:instagramCatalogue});
-    const nexo=createNexoProvider({packageDirectory:process.env.NEXO_PACKAGE_DIR,run:processTool});
+    const sourcePolicy={allowSourceText:true,allowStylized:true};
+    const nexo=createNexoProvider({packageDirectory:process.env.NEXO_PACKAGE_DIR,run:processTool,sourcePolicy});
     const instagram=nexo?async(...args)=>(await nexo(...args))||(await existingInstagram(...args)):existingInstagram;
     const mediaLookup=(key,operation)=>stockLookup(stockSession,key,operation);
     // Stock searches begin only after the primary Instagram lookup falls back.
@@ -1103,9 +1105,9 @@ async function runJob(job, input, approved = null) {
     const usedImages = new Set();
     let videoCount = 0, videoReservations = 0, completedMedia = 0;
     const maxVideos = strictMedia?.videos||clamp(Number(process.env.STOCK_VIDEO_MAX_SCENES) || 3, 1, 6);
-    const verifyFraming=framingReviewer({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets,fit:input.mediaFit,
+    const verifyFraming=framingReviewer({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets,fit:input.mediaFit,sourcePolicy,
       onWarning:warning=>job.warnings.push(warning),
-      onReject:({id,reason})=>{const scene=Number(/^(?:video|photo|still)-(\d+)/.exec(id)?.[1]);if(Number.isFinite(scene))job.warnings.push(`Scene ${scene+1}: visual rejected: ${reason}`);}});
+      onReject:({id,reason})=>{const scene=Number(/^(?:video|photo|still)-(\d+)/.exec(id)?.[1]);if(Number.isFinite(scene)){const message=`Scene ${scene+1}: visual rejected: ${reason}`;if(!job.warnings.includes(message))job.warnings.push(message);}}});
     let visualPass=0;
 
     const prepareSceneMedia = async i => {
@@ -1123,7 +1125,7 @@ async function runJob(job, input, approved = null) {
           videoReservations++;
           try {
             const clip = await stockVideo(mediaVideoQuery(scene,sceneSource,topic), join(assets, `clip_${i}.mp4`), {
-              instagram,scene,topic,
+              instagram,scene,topic,sourcePolicy,
               used: usedImages,
               session:stockSession,
               subject:scene.subjectEntity||sceneSource.title||topic,
@@ -1356,7 +1358,7 @@ async function runJob(job, input, approved = null) {
           // a static JPEG, never an extra moving-video scene or a reused clip.
           if(!selected&&strictMedia&&visualPass>0){
             const stillSource=await stockVideo(mediaVideoQuery(scene,sceneSource,topic),join(assets,`photo_source_${i}.mp4`),{
-              instagram,scene,topic,
+              instagram,scene,topic,sourcePolicy,
               used:usedImages,subject:scene.subjectEntity||sceneSource.title||topic,session:stockSession,creditPlacement:'description',
               inspect:async media=>{
                 const probe=JSON.parse(await processTool('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height:format=duration','-of','json',media.file]));
@@ -1724,6 +1726,7 @@ async function runJob(job, input, approved = null) {
       }
     );
 
+    try{job.renderPerformance=JSON.parse(await readFile(join(folder,'video.render-metrics.json'),'utf8'));}catch{/* Older renderer output has no metrics. */}
     if (
       (await stat(output)).size < 1000
     ) {

@@ -23,7 +23,7 @@ def ocr_language(binary):
     return '+'.join(lang for lang in ('eng', 'hin') if lang in available) or 'eng'
 
 
-def frame_metrics(path, source=True, fit='cover'):
+def frame_metrics(path, source=True, fit='cover', allow_source_text=False):
     image = cv2.imread(path, cv2.IMREAD_COLOR)
     if image is None:
         return {'approved': False, 'issues': ['Frame cannot be decoded']}
@@ -68,8 +68,8 @@ def frame_metrics(path, source=True, fit='cover'):
     bits = (mini[:, 1:] > mini[:, :-1]).reshape(-1)
     dhash = format(sum(int(bit) << i for i, bit in enumerate(bits)), '016x')
     text = []
-    ocr = shutil.which('tesseract') if source else None
-    ocr_status = 'not-run-on-export' if not source else 'unavailable'
+    ocr = shutil.which('tesseract') if source and not allow_source_text else None
+    ocr_status = 'not-run-on-export' if not source else ('allowed-by-policy' if allow_source_text else 'unavailable')
     if ocr:
         # No shell, temporary files, network or model downloads.
         encoded = cv2.imencode('.png', small)[1].tobytes()
@@ -100,7 +100,7 @@ def analyze(request):
     paths = request.get('paths', [])
     if not paths or len(paths) > 96:
         raise ValueError('Expected 1-96 sampled frames')
-    frames = [frame_metrics(path, request.get('source', True), request.get('fit', 'cover')) for path in paths]
+    frames = [frame_metrics(path, request.get('source', True), request.get('fit', 'cover'), request.get('allowSourceText', False)) for path in paths]
     warnings = []
     if any(f.get('ocr') in ('unavailable', 'failed') for f in frames):
         warnings.append('Local OCR unavailable or failed; embedded text was not fully checked. Install Tesseract for text checks.')

@@ -27,6 +27,7 @@ import random
 import subprocess
 import sys
 import re
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -2356,13 +2357,21 @@ class Reel:
                         "-ar", "48000", "-shortest", "-movflags", "+faststart", str(self.out)], check=True)
         wav.unlink()
 
+    def save_render_metrics(self, started):
+        metrics = getattr(self, 'render_metrics', {'mode': 'pillow', 'nativeScenes': 0, 'originalScenes': len(self.scenes)})
+        metrics.update({'seconds': round(time.perf_counter()-started, 3), 'frames': int(self.dur*FPS),
+                        'fps': FPS, 'threads': int(os.getenv('PAPERDOC_THREADS', '2'))})
+        self.out.with_suffix('.render-metrics.json').write_text(json.dumps(metrics), encoding='utf8')
+
     def render(self):
+        started = time.perf_counter()
         self.out.parent.mkdir(parents=True, exist_ok=True)
         silent = self.out.with_name("_paperdoc_video.mp4")
         from reference_render import render_reference
         if render_reference(self, W, H, FPS, silent, run_hidden, popen_hidden):
             self.mux(silent)
             silent.unlink()
+            self.save_render_metrics(started)
             print("done ->", self.out)
             return
         output_size = self.meta.get("output_size", [W, H])
@@ -2386,6 +2395,7 @@ class Reel:
             raise RuntimeError("ffmpeg video encoder failed")
         self.mux(silent)
         silent.unlink()
+        self.save_render_metrics(started)
         print("done ->", self.out)
 
 

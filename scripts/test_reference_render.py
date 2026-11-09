@@ -103,6 +103,10 @@ class NativeReferenceTests(unittest.TestCase):
             wav.writeframes((tone * 32767).astype('<i2').tobytes())
         reel.meta.update({'voice': 'voice.wav', 'whoosh_db': None})
         reel.render()
+        metrics = json.loads(reel.out.with_suffix('.render-metrics.json').read_text())
+        self.assertEqual(metrics['mode'], 'ffmpeg')
+        self.assertEqual(metrics['nativeScenes'], 3)
+        self.assertEqual(metrics['originalScenes'], 0)
         probe = json.loads(subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
                            'stream=codec_type,width,height:format=duration', '-of', 'json', str(reel.out)],
                           check=True, capture_output=True).stdout)

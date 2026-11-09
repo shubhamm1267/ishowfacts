@@ -56,6 +56,29 @@ test('matching rejects generic texture missing the actual topic',async()=>{
  assert.equal(metadataReview({title:'textured metal silver sheet'},{subjectEntity:'metal thimble texture'},'Thimble').approved,false);
 });
 
+test('later scenes retain Pinterest retrieval budget after slow CPU inspection',async()=>{
+ let clock=0,calls=0;const dir=await mkdtemp(join(tmpdir(),'nexo-cpu-budget-'));
+ const session={metrics:{searches:[]}},used=new Set();
+ const provider=createNexoProvider({now:()=>clock,budgetMs:20,lookupMs:10,
+  search:async q=>{clock+=2;calls++;const subject=q.replace(' video','');return {status:true,data:{pins:[{is_video:true,title:subject,video_url:`https://v1.pinimg.com/${subject}.m3u8`,pin_url:'https://www.pinterest.com/pin/123/',videos:{list:{low:{width:360,height:640}}}}]}};},
+  download:async()=>{clock+=2;}});
+ try{
+  for(const subject of ['banana','sloth']){
+   const result=await provider(subject,join(dir,subject+'.mp4'),{session,used,subject,inspect:async()=>{clock+=120000;return {checked:true};}});
+   assert.ok(result?.checked,'CPU processing must not exhaust later scenes retrieval allowance');
+  }
+  assert.equal(calls,2);assert.ok(session.metrics.searches.every(row=>row.status==='selected'));
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('Pinterest budget still bounds actual slow retrieval requests',async()=>{
+ let clock=0,calls=0;const session={metrics:{searches:[]}};
+ const provider=createNexoProvider({now:()=>clock,budgetMs:20,lookupMs:10,search:async()=>{clock+=25;calls++;return {status:true,data:{pins:[]}};}});
+ const options={session,used:new Set(),subject:'sloth',inspect:async()=>assert.fail('No clip should be downloaded')};
+ await provider('sloth','unused.mp4',options);await provider('banana','unused.mp4',options);
+ assert.equal(calls,1);assert.equal(session.metrics.searches[1].status,'budget exhausted');
+});
+
 test('process JSON output excludes decoder warnings on stderr',async()=>{
  const {processTool}=await import('../server.mjs');
  const output=await processTool(process.execPath,['-e','process.stderr.write("warning\\n");process.stdout.write(JSON.stringify({width:360}))']);

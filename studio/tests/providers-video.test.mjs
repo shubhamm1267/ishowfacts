@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { gemini, runWithProviders, demoEpisode, wikipediaSource,commonsImage,openverseImage,inspectVideoFrames } from '../lib/core.mjs';
 import { mixkitItem, vecteezyFree, syntheticStock, stockVideo,topicFootageAvailability,stockPhoto,createStockSession,createStockMediaCache,prefetchStockVideo,stockFile,stockLookup,commonsVideo,uploadDescription,moveCreditsToDescription } from '../lib/stock-video.mjs';
 import {Resvg} from '@resvg/resvg-js';
-import {mkdtemp,readFile,writeFile,readdir,stat} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,readdir,stat,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import { buildAdvancedPlan, validateAdvancedPlan } from '../lib/director.mjs';
@@ -36,6 +36,27 @@ test('documentary stock rejects the observed non-AI cartoon and animation metada
  assert.equal(syntheticStock('Animated octopus underwater'),true);
  assert.equal(syntheticStock('Abstract peacock gradient background pattern'),true);
  assert.equal(syntheticStock('Octopus hiding underwater in sea - slow motion'),false);
+});
+
+test('final subject gate runs before stock downloads and frame inspection',async()=>{
+ const saved=globalThis.fetch,folder=await mkdtemp(join(tmpdir(),'stock-prefilter-')),bytes=Buffer.alloc(2000),downloads=[],reviews=[];
+ bytes.write('ftyp',4);
+ try{
+  globalThis.fetch=async address=>{
+   const url=new URL(address),path=url.pathname;
+   if(url.hostname==='api.vecteezy.com'){
+    if(path.endsWith('/resources'))return Response.json({resources:['Sloth','Sloth swimming'].map((title,i)=>({id:i+1,title,content_type:'video',file_metadata:{available_file_types:[{extension:'mp4',size_in_bytes:2000}]}}))});
+    if(path.endsWith('/download'))return Response.json({url:'https://static.vecteezy.com/'+path.split('/').at(-2)+'.mp4'});
+    return Response.json({license_type:'commercial',ai_generated:false});
+   }
+   if(url.hostname==='www.vecteezy.com')return new Response('<h1>Free Video</h1><a href="?license_type=free"><script type="application/ld+json">{"copyrightNotice":"Creator"}</script>');
+   if(url.hostname==='static.vecteezy.com'){downloads.push(path);return new Response(bytes);}
+   throw Error('Unexpected URL '+url.hostname);
+  };
+  const result=await runWithProviders({VECTEEZY_ACCOUNT_ID:'224151',VECTEEZY_API_KEY:'test'},()=>stockVideo('sloth swimming',join(folder,'clip.mp4'),{
+   subject:'sloth swimming',topic:'Sloth',scene:{subjectEntity:'sloth swimming',visualRole:'evidence'},inspect:async item=>{reviews.push(item.id);return {verified:true};}}));
+  assert.equal(result.id,'vecteezy:2');assert.deepEqual(downloads,['/2.mp4']);assert.deepEqual(reviews,['vecteezy:2']);
+ }finally{globalThis.fetch=saved;await rm(folder,{recursive:true,force:true});}
 });
 test('stock review budget bounds Vecteezy downloads and still reaches Mixkit',async()=>{
  const saved=globalThis.fetch,setting=process.env.STOCK_VIDEO_CANDIDATES;

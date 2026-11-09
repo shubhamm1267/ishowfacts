@@ -12,7 +12,7 @@ export function metadataScore(title,subject){
  const matched=w=>found.some(t=>stem(t)===stem(w))||(w.length>=5&&fuse.search(w).some(r=>(r.score??1)<=.3));
  return wanted.filter(matched).length/wanted.length;
 }
-export function metadataReview(media,scene,topic){
+export function metadataReview(media,scene,topic,{allowSourceText=false,allowStylized=false}={}){
  // Search queries are not evidence: only actual provider metadata is compared.
  const title=[media?.title,...(Array.isArray(media?.tags)?media.tags:[])].filter(Boolean).join(' ');
  const subject=scene.subjectEntity||scene.visualQuery||topic;
@@ -25,7 +25,10 @@ export function metadataReview(media,scene,topic){
  const sameTopic=topicWords.length>0&&topicWords.every(w=>subjectWords.some(s=>stem(s)===stem(w)));
  const contextScore=scene.visualRole==='context'&&!scene.pointOut&&!scene.shownActionRequired&&sameTopic?metadataScore(title,topic):0;
  const score=Math.max(exactScore,contextScore);
- const prohibited=/\b(?:green[ -]?screen|blue[ -]?screen|chroma[ -]?key|mockup|placeholder|watermark|template|ai[ -]generated|cartoon|illustration|animation|3d[ -]?render|subtitles?|logo)\b/i.test(title);
+ const illustrativeContext=allowStylized&&scene.visualRole==='context'&&!scene.pointOut&&!scene.shownActionRequired;
+ const prohibited=/\b(?:green[ -]?screen|blue[ -]?screen|chroma[ -]?key|mockup|placeholder|template)\b/i.test(title)
+  ||(!allowSourceText&&/\b(?:watermark|subtitles?|logo)\b/i.test(title))
+  ||(!illustrativeContext&&/\b(?:ai[ -]generated|cartoon|illustration|animation|3d[ -]?render)\b/i.test(title));
  const topicPresent=!sameTopic||metadataScore(title,topic)>=.6;
  return {approved:!prohibited&&topicPresent&&score>=.6,score,exactScore,contextTopicMatch:contextScore>exactScore,subject,title,method:'fuzzy-metadata',semanticIdentityChecked:false};
 }
@@ -33,18 +36,18 @@ export function hashDistance(a,b){
  if(!/^[a-f0-9]{16}$/i.test(a||'')||!/^[a-f0-9]{16}$/i.test(b||''))return 64;
  let n=BigInt('0x'+a)^BigInt('0x'+b),bits=0;while(n){n&=n-1n;bits++;}return bits;
 }
-export async function checkFrames(paths,{run,python,root,source=true,fit='cover'}){
- const report=JSON.parse(await run(python,[join(root,'scripts','local_media_check.py'),'--request',JSON.stringify({paths,source,fit})]));
+export async function checkFrames(paths,{run,python,root,source=true,fit='cover',allowSourceText=false}){
+ const report=JSON.parse(await run(python,[join(root,'scripts','local_media_check.py'),'--request',JSON.stringify({paths,source,fit,allowSourceText})]));
  if(!Array.isArray(report.frames)||report.frames.length!==paths.length||!report.frames.every(f=>typeof f.approved==='boolean'&&Array.isArray(f.issues)))throw Error('Incomplete local frame analysis');
  return report;
 }
-export function framingReviewer({run,python,root,assets,fit='cover',onReject=()=>{},onWarning=()=>{}}){
+export function framingReviewer({run,python,root,assets,fit='cover',sourcePolicy={},onReject=()=>{},onWarning=()=>{}}){
  const accepted=[],warned=new Set();
  return async(paths,scene,topic,id,media={})=>{
   const folder=join(assets,'visual-review-'+id);await mkdir(folder,{recursive:true});
-  const metadata=metadataReview(media,scene,topic);
+  const metadata=metadataReview(media,scene,topic,sourcePolicy);
   if(!metadata.approved){await writeFile(join(folder,'local-review.json'),JSON.stringify({approved:false,metadata},null,2));onReject({id,reason:'Provider title/tags do not sufficiently match the requested subject, or describe a placeholder'});return null;}
-  const report=await checkFrames(paths,{run,python,root,fit});
+  const report=await checkFrames(paths,{run,python,root,fit,allowSourceText:sourcePolicy.allowSourceText===true});
   const hashes=report.frames.filter(f=>f.hashUseful).map(f=>f.hash);
   const duplicate=hashes.length>0&&accepted.some(group=>hashes.every(h=>group.some(old=>hashDistance(h,old)<=3)));
   const issues=report.frames.flatMap(f=>f.issues);
