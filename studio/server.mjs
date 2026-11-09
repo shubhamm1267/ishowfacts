@@ -811,9 +811,6 @@ function previewEpisode(episode,topic,index=0){
   return {index,title:normalizeHookTitle(episode.headlineText||episode.title),headline:episode.headlineText||episode.title,topic,
     hook:episode.scenes[0].narration,narration:episode.scenes.map(scene=>scene.narration).join('\n\n')};
 }
-function spokenPreview(episode){
-  return JSON.stringify({headline:episode.headlineText,facts:episode.facts,scenes:episode.scenes.map(({narration,line1,line2})=>({narration,line1,line2}))});
-}
 
 async function runJob(job, input, approved = null) {
   const folder = join(JOBS, job.id);
@@ -840,7 +837,6 @@ async function runJob(job, input, approved = null) {
           await writeFile(join(folder,'approved-story.json'),JSON.stringify(snapshot));
         }
         if(!option.reviewed){
-          const before=spokenPreview(episode);
           episode=await finalizeEpisode(episode,source,{requestedTopic:topic,seconds:input.seconds,hookContext:snapshot.hookContext,
             debugFolder:folder,reviewPrefix:`option-${approved.optionIndex}-`,onStage:stage=>checkpoint(job,stage,20)});
           if(input.visualStyle==='reference-news'){
@@ -851,14 +847,6 @@ async function runJob(job, input, approved = null) {
           option.episode=episode;option.reviewed=true;
           await writeFile(join(folder,'approved-story.json'),JSON.stringify(snapshot));
           job.storyOptions=snapshot.options.map((o,index)=>({...previewEpisode(o.episode,topic,index),reviewed:!!o.reviewed}));
-          if(before!==spokenPreview(episode)){
-            job.preview=previewEpisode(episode,topic,approved.optionIndex);
-            job.previewNotice='Facts or language needed corrections. Read the updated script and approve it again before voiceover starts.';
-            job.status='awaiting_approval';
-            job.storyPreparationSeconds=(job.storyPreparationSeconds||0)+(timingSummary(job)?.elapsedSeconds||0);
-            job._timing=undefined;
-            await checkpoint(job,'Corrected script ready for your approval',24);return;
-          }
         }
         job.preview=previewEpisode(episode,topic,approved.optionIndex);job.previewNotice=null;job.title=job.preview.title;
         let history=[];try{history=JSON.parse(await readFile(join(JOBS,'.hook-history.json'),'utf8'));}catch{}
@@ -972,7 +960,7 @@ async function runJob(job, input, approved = null) {
       await writeFile(join(folder,'approved-story.json'),JSON.stringify({input:savedInput,topic,source,hookContext,options:options.map(episode=>({episode,reviewed:false}))}));
       job.storyOptions=options.map((option,index)=>({...previewEpisode(option,topic,index),reviewed:false}));
       job.preview=job.storyOptions[0];job.title='Choose one of three scripts';
-      job.previewNotice='These are draft scripts. Only your chosen script is fact-checked and language-reviewed before voiceover.';
+      job.previewNotice='Choose a script to make your video. Necessary fact and language corrections are handled automatically.';
       job.sources=source.articles?.map(article=>({name:article.title,url:article.url}))||(source.url?[{name:source.title,url:source.url}]:[]);
       job.status='awaiting_approval';await checkpoint(job,'Three scripts ready for your choice',24);return;
     }
@@ -1792,6 +1780,7 @@ async function runJob(job, input, approved = null) {
 
     const cancelled=jobControllers.get(job.id)?.signal.aborted;
     job.error = cancelled ? null : e.message || 'Video generation failed';
+    job.previewNotice = null;
     job.status = cancelled ? 'cancelled' : 'failed';
     job.video = false;
 
@@ -2204,7 +2193,7 @@ export function makeServer({frontendOrigin=ALLOWED_ORIGIN}={}) {
               job.preview=previewEpisode(selected.episode,saved.topic,body.optionIndex);
             }
             const input=validateInput({...saved.input,providerKeys:body.providerKeys||{},previewFirst:false});
-            job.status='running';job.expiresAt=null;job.error=null;job.warnings=[];job.cancelRequested=false;
+            job.status='running';job.expiresAt=null;job.error=null;job.previewNotice=null;job.warnings=[];job.cancelRequested=false;
             job.storyPreparationSeconds||=(timingSummary(job)||job.performance)?.elapsedSeconds||0;
             job._timing=undefined;
             jobs.set(id,job);activeJob=job;

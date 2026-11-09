@@ -75,7 +75,7 @@ test('Gemini hook style suggestions never rewrite the selected opening or add an
  }finally{globalThis.fetch=saved;}
 });
 
-test('API selects the requested option and asks approval again after a correction, with no premature TTS',{timeout:20000},async()=>{
+test('API selects the requested option, reviews corrections and starts TTS without another approval',{timeout:20000},async()=>{
  const saved=globalThis.fetch,previousDemo=process.env.DEMO_MODE;process.env.DEMO_MODE='1';
  const server=makeServer();await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const base='http://127.0.0.1:'+server.address().port;
  let id,folder,tts=0,reviews=0;const spoken=[];
@@ -104,12 +104,13 @@ test('API selects the requested option and asks approval again after a correctio
   for(const optionIndex of [undefined,-1,3,'1'])assert.equal((await approve({optionIndex})).status,400);
   assert.equal((await approve({optionIndex:1})).status,202);
   let job;
-  for(let i=0;i<200;i++){job=await get();if(job.status!=='running'&&job.expiresAt)break;await new Promise(r=>setTimeout(r,20));}
-  assert.equal(job.status,'awaiting_approval');assert.equal(tts,0);assert.equal(job.storyOptions.length,3);
-  assert.ok(job.storyOptions[1].narration.startsWith(corrected));assert.equal(job.storyOptions[1].reviewed,true);assert.equal(job.storyOptions[0].reviewed,false);assert.match(job.previewNotice,/correct/i);
-  assert.equal((await approve({optionIndex:1})).status,202);
-  for(let i=0;i<150&&!tts;i++)await new Promise(r=>setTimeout(r,20));
-  assert.ok(spoken.some(text=>text.trim()===corrected.trim()));assert.equal(reviews,2,'reviewed corrected option is not reviewed a third time');
+  for(let i=0;i<200&&!tts;i++){
+   job=await get();assert.equal(job.status,'running','selected story must not return to approval after a correction');
+   await new Promise(r=>setTimeout(r,20));
+  }
+  job=await get();assert.equal(job.status,'running');assert.ok(tts>0);assert.equal(job.storyOptions.length,3);
+  assert.ok(job.storyOptions[1].narration.startsWith(corrected));assert.equal(job.storyOptions[1].reviewed,true);assert.equal(job.storyOptions[0].reviewed,false);assert.equal(job.previewNotice,null);
+  assert.ok(spoken.some(text=>text.trim()===corrected.trim()));assert.equal(reviews,2,'correction is reviewed before TTS without another user click');
   assert.equal((await approve({optionIndex:2})).status,409);
  }finally{
   if(id)await saved(base+'/api/jobs/'+id+'/cancel',{method:'POST'});

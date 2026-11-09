@@ -182,14 +182,14 @@ interface Health {
           <section *ngIf="(job?.status === 'awaiting_approval' || job?.status === 'failed') && job?.preview" class="story-preview">
             <h2>{{ job?.storyOptions?.length ? 'Choose your script' : 'Review your story' }}</h2>
             <p *ngIf="job?.previewNotice" class="config">{{ job!.previewNotice }}</p>
-            <p *ngIf="job?.status === 'failed'" class="config">Your scripts are saved. You can choose another script or retry.</p>
+            <p *ngIf="job?.status === 'failed'" class="config">Video generation stopped: {{ job?.error || 'An unexpected error occurred.' }} Your selected script is saved for retry.</p>
             <ng-container *ngIf="job?.storyOptions?.length; else singleStory">
               <article *ngFor="let option of job!.storyOptions; let i = index" class="finished" style="margin:16px 0;padding:18px;border:1px solid #d7d7d7;border-radius:12px">
                 <h3>Script {{ i + 1 }}: {{ option.title }}</h3>
                 <p><strong>Topic:</strong> {{ option.topic }}</p>
                 <p><strong>Hook:</strong> {{ option.hook }}</p>
                 <p style="white-space:pre-wrap;line-height:1.8">{{ option.narration }}</p>
-                <p class="config">{{ option.reviewed ? 'Facts and language reviewed.' : 'Draft: selected script will be reviewed before narration.' }}</p>
+                <p class="config">{{ option.reviewed ? 'Facts and language reviewed.' : 'Select once to start your video. Necessary corrections are automatic.' }}</p>
                 <button class="primary" (click)="approveStory(option.index)" [disabled]="working">MAKE VIDEO WITH SCRIPT {{ i + 1 }}</button>
               </article>
             </ng-container>
