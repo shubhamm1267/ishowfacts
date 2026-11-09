@@ -4,7 +4,7 @@ import {join,dirname} from 'node:path';
 import {mkdir,writeFile,rm} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {generationFetch,checkGenerationCancelled} from './core.mjs';
-import {metadataReview} from './local-visual-quality.mjs';
+import {metadataReview,metadataCandidate} from './local-visual-quality.mjs';
 import {usableVideoDimensions} from './video-resolution.mjs';
 
 export function pinterestMediaUrl(value){
@@ -32,7 +32,7 @@ export async function downloadPinterestExcerpt(url,dest,{run,seconds=12}={}){
     const next=lines.slice(i+1).find(l=>l.trim()&&!l.startsWith('#'));if(next)variants.push({url:new URL(next,url).href,height:Number(/RESOLUTION=\d+x(\d+)/.exec(lines[i])?.[1]||0)});
    }
    if(!variants.length)break;
-   const selected=variants.filter(v=>v.height<=1280).sort((a,b)=>b.height-a.height)[0]||variants.sort((a,b)=>a.height-b.height)[0];url=selected.url;
+   const selected=variants.filter(v=>v.height>=720&&v.height<=1920).sort((a,b)=>b.height-a.height)[0]||variants.sort((a,b)=>a.height-b.height)[0];url=selected.url;
    if(depth===2)throw Error('Nested HLS limit');
   }
   const output=['#EXTM3U','#EXT-X-VERSION:3','#EXT-X-TARGETDURATION:60','#EXT-X-MEDIA-SEQUENCE:0'];
@@ -82,7 +82,8 @@ export function createNexoProvider({packageDirectory,run,search,download=downloa
   try{
    checkGenerationCancelled();
    const brief=scene||{subjectEntity:subject||query};
-   const queries=[...new Set([query,subject,brief.visualRole==='context'&&!brief.pointOut&&!brief.shownActionRequired?topic:null].filter(Boolean).map(q=>String(q).trim().toLowerCase()))].slice(0,3);
+   const anchored=sourcePolicy.semanticVerification&&topic?`${topic} ${subject||query}`:null;
+   const queries=[...new Set([anchored,query,subject,brief.visualRole==='context'&&!brief.pointOut&&!brief.shownActionRequired?topic:null].filter(Boolean).map(q=>String(q).trim().toLowerCase()))].slice(0,3);
    const briefKey=JSON.stringify([subject,brief.visualRole,topic]);
    if(!state.rejected.has(briefKey))state.rejected.set(briefKey,new Set());const rejected=state.rejected.get(briefKey);
    const title=p=>[p.title,p.description].filter(Boolean).join(' ').slice(0,500);
@@ -95,7 +96,7 @@ export function createNexoProvider({packageDirectory,run,search,download=downloa
     if(!result.status){row.error=result.message||'Pinterest search failed';continue;}
     const pins=(result.data?.pins||[]).filter(p=>p.is_video&&pinterestMediaUrl(p.video_url));row.results+=pins.length;
     const ranked=pins.map(pin=>({pin,review:metadataReview({title:title(pin)},brief,topic,sourcePolicy)}))
-     .filter(({pin,review})=>Object.values(pin.videos?.list||{}).some(v=>usableVideoDimensions(v.width,v.height))&&review.approved)
+     .filter(({pin,review})=>Object.values(pin.videos?.list||{}).some(v=>usableVideoDimensions(v.width,v.height))&&metadataCandidate({title:title(pin)},brief,topic,sourcePolicy))
      .sort((a,b)=>b.review.score-a.review.score);
     for(const {pin} of ranked){
     checkGenerationCancelled();if(exhausted()||row.candidates>=4)break;

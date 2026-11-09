@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {metadataReview,metadataScore,hashDistance,framingReviewer,reviewRenderedVideo,checkFrames} from '../lib/local-visual-quality.mjs';
+import {createSemanticReviewer,metadataCandidate,metadataReview,metadataScore,hashDistance,framingReviewer,reviewRenderedVideo,checkFrames} from '../lib/local-visual-quality.mjs';
 
 const exec=promisify(execFile),root=resolve('..'),python=process.env.PYTHON||'python3';
 const run=async(command,args)=>(await exec(command,args,{windowsHide:true,timeout:30000,maxBuffer:2*1024*1024})).stdout;
@@ -88,5 +88,94 @@ test('final review samples all scenes in a single real FFmpeg decode',async()=>{
   const plan={meta:{out:file,duration:2,size:[160,240],fps:24},scenes:[{start:0,reference_media:{media_type:'video'}},{start:1,reference_media:{media_type:'video'}}]};
   const result=await reviewRenderedVideo(plan,{}, {run:measured,python,root,assets:folder});
   assert.equal(decodes,1);assert.equal(result.approved,true,JSON.stringify(result.issues));assert.equal(result.framesChecked,6);
+ }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+
+test('Gemini reviews actual frames once per identical content and brief, not title alone',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'semantic-review-'));let calls=0;
+ try{
+  const file=join(folder,'frame.jpg');await writeFile(file,'sample image bytes');
+  const scene={subjectEntity:'iron rich brine flowing from Blood Falls',visualRole:'evidence'};
+  const media={title:'Blood Falls Antarctica',source:'https://example.org/blood-falls'};
+  assert.equal(metadataReview(media,scene,'Blood Falls').approved,false);
+  assert.equal(metadataCandidate(media,scene,'Blood Falls',{semanticVerification:true}),true);
+  const verify=createSemanticReviewer({generate:async(prompt,paths,options)=>{
+   calls++;assert.match(prompt,/appearance alone cannot prove/);assert.deepEqual(paths,[file]);assert.equal(options.maxAttempts,1);
+   return {matches:true,confidence:.9,reason:'Red outflow visible against glacier',actionChecked:true,topicConnection:'direct',metadataConsistent:true,topicIdentityMatch:true,topicIsNamedPlace:true,depictedPlaceName:'Blood Falls',referenceCompatible:true,frames:[{subjectVisible:true,introOrOutro:false,compatible:true}]};
+  }});
+  const a=await verify([file],scene,'Blood Falls',media);
+  await verify([file],scene,'Blood Falls',media);assert.equal(calls,1);assert.equal(a.approved,true);
+  await verify([file],{...scene,shownActionRequired:'flowing'},'Blood Falls',media);assert.equal(calls,2);
+  await writeFile(file,'different frames');await verify([file],scene,'Blood Falls',media);assert.equal(calls,3);
+  const bad=createSemanticReviewer({generate:async()=>({matches:true})});
+  await assert.rejects(bad([file],scene,'Blood Falls',media),/Incomplete Gemini/);
+ }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+test('semantic gate rescues weak titles but rejects unrelated pixels; technical failures skip Gemini',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'semantic-gate-'));let calls=0,technical=true,match=true;
+ try{
+  const verify=framingReviewer({root,assets:folder,python,run:async()=>JSON.stringify({frames:[{approved:technical,issues:technical?[]:['blank']}]}),
+   verifySemantic:async()=>{calls++;return {approved:match,confidence:.9,reason:'wrong visible object',semanticIdentityChecked:true};}});
+  const scene={subjectEntity:'iron rich brine flowing from Blood Falls',visualRole:'evidence'},media={title:'Blood Falls Antarctica'};
+  assert.ok(await verify(['fake.jpg'],scene,'Blood Falls','accepted',media));
+  match=false;assert.equal(await verify(['fake.jpg'],scene,'Blood Falls','rejected',media),null);
+  technical=false;assert.equal(await verify(['fake.jpg'],scene,'Blood Falls','blank',media),null);assert.equal(calls,2);
+  const report=JSON.parse(await readFile(join(folder,'visual-review-accepted','local-review.json'),'utf8'));
+  assert.equal(report.semanticIdentityChecked,true);assert.equal(report.method,'local-technical-and-gemini');
+ }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+
+test('semantic context cannot waive intro frames, a contradictory experiment or generic location',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'context-regression-'));
+ try{
+  const file=join(folder,'frame.jpg');await writeFile(file,'frame');
+  const scene={subjectEntity:'hydrous ferric oxides',visualRole:'context'};
+  const base={matches:true,confidence:.95,reason:'Related science',actionChecked:false,topicConnection:'explanatory',metadataConsistent:true,topicIdentityMatch:true,topicIsNamedPlace:true,depictedPlaceName:'Blood Falls',referenceCompatible:true,frames:[{subjectVisible:true,introOrOutro:false,compatible:true}]};
+  for(const change of [
+   {metadataConsistent:false},
+   {topicIdentityMatch:false},
+   {depictedPlaceName:'Hormuz Island'},
+   {depictedPlaceName:'unknown'},
+   {topicConnection:'generic'},
+   {frames:[{subjectVisible:false,introOrOutro:true,compatible:true}]},
+   {frames:[{subjectVisible:true,introOrOutro:false,compatible:false}]}
+  ]){
+   const verify=createSemanticReviewer({generate:async()=>({...base,...change})});
+   assert.equal((await verify([file],scene,'Blood Falls',{title:'Hydrogen and oxygen forming water'})).approved,false);
+  }
+  const verify=createSemanticReviewer({generate:async()=>base});
+  assert.equal((await verify([file],scene,'Blood Falls',{title:'Iron oxide experiment'})).approved,true);
+ }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+
+test('reference image is compared separately and a visual contradiction overrides confident approval',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'reference-relevance-'));
+ try{
+  const frame=join(folder,'frame.jpg'),ref=join(folder,'reference.jpg');await writeFile(frame,'candidate');await writeFile(ref,'reference');
+  const verify=createSemanticReviewer({referenceFor:async()=>({file:ref,title:'Reference landmark',source:'https://commons.wikimedia.org/example'}),generate:async(prompt,paths)=>{
+   assert.deepEqual(paths,[ref,frame]);assert.match(prompt,/FIRST image.*reference photograph/);
+   return {matches:true,confidence:.99,reason:'Reconstruction differs from the reference',topicConnection:'direct',metadataConsistent:true,topicIdentityMatch:true,topicIsNamedPlace:true,depictedPlaceName:'Blood Falls',referenceCompatible:false,frames:[{subjectVisible:true,introOrOutro:false,compatible:true}]};
+  }});
+  assert.equal((await verify([frame],{subjectEntity:'Blood Falls'},'Blood Falls',{title:'Blood Falls'})).approved,false);
+ }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+
+test('an independent reference critic can veto an optimistic first landmark review',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'landmark-critic-'));let calls=0;
+ try{
+  const frame=join(folder,'frame.jpg'),ref=join(folder,'ref.jpg');await writeFile(frame,'candidate');await writeFile(ref,'real site');
+  const verify=createSemanticReviewer({referenceFor:async()=>({file:ref,title:'Blood Falls',source:'https://commons.wikimedia.org/example'}),generate:async(prompt)=>{
+   calls++;
+   if(calls===1)return {matches:true,confidence:.99,reason:'Looks like the title',topicConnection:'direct',metadataConsistent:true,topicIdentityMatch:true,topicIsNamedPlace:true,depictedPlaceName:'Taylor Glacier',referenceCompatible:true,frames:[{subjectVisible:true,introOrOutro:false,compatible:true}]};
+   assert.match(prompt,/Independently compare terrain geometry/);assert.doesNotMatch(prompt,/Looks like the title/);
+   return {sameSite:false,unmodifiedDocumentary:false,confidence:.95,compatibleFrames:[false],reason:'Morphology differs from reference'};
+  }});
+  const result=await verify([frame],{subjectEntity:'Blood Falls'},'Blood Falls',{title:'Blood Falls'});
+  assert.equal(result.approved,false);assert.equal(calls,2);assert.match(result.reason,/Morphology/);
  }finally{await rm(folder,{recursive:true,force:true});}
 });

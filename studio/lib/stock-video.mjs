@@ -1,4 +1,4 @@
-import {metadataScore,metadataReview} from './local-visual-quality.mjs';
+import {metadataScore,metadataCandidate} from './local-visual-quality.mjs';
 import {usableVideoDimensions,preferredVideoFile} from './video-resolution.mjs';
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat,writeFile } from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
@@ -214,7 +214,7 @@ export function syntheticStock(title=''){
  return /\b(?:green[ -]?screen|blue[ -]?screen|chroma[ -]?key|placeholder|mock[ -]?up|cartoon|animat(?:ed|ion)|illustrat(?:ed|ion)|3d|cgi|render(?:ed|ing)?|motion graphics?|seamless loop|alpha channel|transparent background|striped background|abstract|gradient background|background pattern|geometric pattern)\b/i.test(title);
 }
 
-export async function stockPhoto(query,dest,{used=new Set(),session=createStockSession()}={}){
+export async function stockPhoto(query,dest,{used=new Set(),session=createStockSession(),scene=null,topic='',sourcePolicy={}}={}){
  checkGenerationCancelled();
  const apiKey=providerValue('PEXELS_API_KEY');if(!apiKey)return null;
  const url=new URL('https://api.pexels.com/v1/search');
@@ -228,7 +228,7 @@ export async function stockPhoto(query,dest,{used=new Set(),session=createStockS
  let attempts=0,failure;
  for(const photo of data.photos||[]){
   const id='pexels-photo:'+photo.id;
-  if(used.has(id)||!photo.url||syntheticStock(photo.alt)||mediaTitleMismatch(photo.alt,query)||!highQualityImage(photo))continue;
+  if(used.has(id)||!photo.url||syntheticStock(photo.alt)||(sourcePolicy.semanticVerification&&scene?!metadataCandidate({title:photo.alt},scene,topic,sourcePolicy):mediaTitleMismatch(photo.alt,query))||!highQualityImage(photo))continue;
   // large2x retains HD detail without decoding an unbounded camera original.
   let address;try{address=new URL(photo.src?.large2x);}catch{continue;}
   if(address.protocol!=='https:'||address.hostname!=='images.pexels.com'||address.username||address.password)continue;
@@ -253,8 +253,8 @@ export async function stockPhoto(query,dest,{used=new Set(),session=createStockS
 export async function stockVideo(query, dest, { used = new Set(), inspect,subject='',scene,topic='',sourcePolicy={},seconds=7,session=createStockSession(),instagram=null } = {}) {
   checkGenerationCancelled();
   const searchStart=session.metrics.searches.length;
-  // Production supplies the bounded Instagram adapter. Tests/other clients can
-  // omit it; the stock fallback order and all source/crop gates stay intact.
+  // Production supplies OmniDL -> Nexo -> Instagram as the primary chain.
+  // Stock providers run only after that chain has no verified HD excerpt.
   if(instagram){
     try{const primary=await instagram(query,dest,{used,inspect,subject,scene,topic,seconds,session});if(primary)return primary;}
     catch(error){checkGenerationCancelled();session.metrics.searches.push({provider:'Instagram',query,status:'unavailable',error:String(error.message).slice(0,250),results:0,reviewed:0});}
@@ -268,9 +268,9 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
   // Cheap ranking saves downloads of popular but unrelated results. Actual
   // frame inspection remains mandatory; a title is not proof of relevance.
   const relevance=title=>metadataScore(title,subject||query);
-  // Use the final metadata gate before acquiring bytes too. A rejected title
-  // must not consume download, FFprobe and three-frame decode work.
-  const eligibleTitle=title=>!scene||metadataReview({title},scene,topic,sourcePolicy).approved;
+  // Shortlist before downloading. With semantic verification enabled,
+  // partial metadata matches reach the actual-frame reviewer.
+  const eligibleTitle=title=>!scene||metadataCandidate({title},scene,topic,sourcePolicy);
   const candidates = [];
   const failures=[];
   const searches=session.metrics.searches.slice(searchStart);
@@ -290,7 +290,7 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
       const ranked=(data.resources||[]).map((item,index)=>({item,index,score:relevance(item.title)}))
         .sort((a,b)=>b.score-a.score||a.index-b.index);
       for (const {item} of ranked) {
-        if (item.content_type !== 'video' || used.has(`vecteezy:${item.id}`) || !eligibleTitle(item.title) || syntheticStock(item.title) || mediaTitleMismatch(item.title,subject||query)) continue;
+        if (item.content_type !== 'video' || used.has(`vecteezy:${item.id}`) || !eligibleTitle(item.title) || syntheticStock(item.title) || (!sourcePolicy.semanticVerification&&mediaTitleMismatch(item.title,subject||query))) continue;
         const files = item.file_metadata?.available_file_types || [];
         const file = stockFile(files);
         if (!file) continue; // Never acquire a multi-GB source/unknown-size file.
@@ -397,7 +397,7 @@ export async function stockVideo(query, dest, { used = new Set(), inspect,subjec
      const id=provider+':'+row.id;
      if(used.has(id)||row.is_ai_generated===true||row.is_premium===true||row.sponsored===true)continue;
      const title=stockTitle(row);
-     if(!eligibleTitle(title)||syntheticStock(title)||mediaTitleMismatch(title,subject||query))continue;
+     if(!eligibleTitle(title)||syntheticStock(title)||(!sourcePolicy.semanticVerification&&mediaTitleMismatch(title,subject||query)))continue;
      const file=provider==='pexels'?(row.video_files||[]).filter(f=>f.file_type==='video/mp4'&&usableVideoDimensions(f.width,f.height)).sort(preferredVideoFile)[0]:null;
      const link=provider==='pexels'?file?.link:usableVideoDimensions(row.max_width,row.max_height)?row.urls?.mp4_download:null;
      if(!link)continue;

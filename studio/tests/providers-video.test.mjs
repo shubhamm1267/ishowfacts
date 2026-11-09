@@ -268,9 +268,9 @@ test('stream byte limit rejects oversized clips even without a content-length he
  }finally{globalThis.fetch=saved;if(previous===undefined)delete process.env.STOCK_VIDEO_MAX_MB;else process.env.STOCK_VIDEO_MAX_MB=previous;}
 });
 
-test('metadata prefers HD but accepts lower resolution when HD is unavailable',()=>{
+test('metadata prefers HD and rejects low resolution instead of upscaling it',()=>{
  const files=[{extension:'mp4',size_in_bytes:100,width:640,height:480},{extension:'mp4',size_in_bytes:4000,width:3840,height:2160},{extension:'mp4',size_in_bytes:2000,width:1920,height:1080}];
- assert.equal(stockFile(files),files[2]);assert.equal(stockFile([files[0]]),files[0]);
+ assert.equal(stockFile(files),files[2]);assert.equal(stockFile([files[0]]),undefined);
  assert.equal(stockFile([{extension:'mp4',size_in_bytes:100,width:320,height:240}]),undefined);
  assert.ok(stockFile([{extension:'mp4',size_in_bytes:2000}]),'unknown dimensions still require the existing ffprobe check');
 });

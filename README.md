@@ -56,3 +56,10 @@ Claude polishes the voice, transcribes it word by word, shows you a scene table 
 - 9:16 only for now.
 
 Licences: see `NOTICE.md`.
+
+
+### Footage acquisition
+
+Generation tries **OmniDL ? Pinterest/Nexo ? Instagram ? existing stock providers ? verified photo fallback**. OmniDL is pinned to an upstream commit in `studio/package-lock.json`; its extractors run headlessly through `scripts/omnidl_extract.mjs`. Topic-based URL discovery is separate from extraction. Downloads and source metadata are shared within each job; excerpts still pass the actual-frame/reference review. Authentication, network failures, missing HD formats and rejected visuals fall through to the next provider. No local sample index is needed in production.
+
+Video sources require a minimum 720-pixel short edge, with 1080p preferred before 720p. Rendering a lower-resolution source into a 1080?1920 container does not make it HD. Source metadata is checked again with FFprobe after download. The Docker Python requirements include yt-dlp and gallery-dl; no extra API key is required for OmniDL. Public availability does not grant reuse rights; source provenance and unverified rights remain recorded in credits.

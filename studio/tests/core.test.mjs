@@ -464,3 +464,12 @@ test('Gemini usage records successful token counts and rejects crypto stock for 
   assert.equal(mediaTitleMismatch('spinning a bitcoin on a table','bitcoin'),false);
  }finally{globalThis.fetch=saved;}
 });
+
+
+test('topic regeneration is explicit and cannot bypass random-topic freshness',()=>{
+ const keys={GEMINI_API_KEY:'test-key',FISH_API_KEY:'test-fish'};
+ assert.equal(validateInput({topic:'Blood Falls',voiceProvider:'fish',providerKeys:keys}).allowRepeatTopic,false);
+ assert.equal(validateInput({topic:'Blood Falls',allowRepeatTopic:true,voiceProvider:'fish',providerKeys:keys}).allowRepeatTopic,true);
+ assert.equal(validateInput({topic:'Blood Falls',factMode:'random',allowRepeatTopic:true,voiceProvider:'fish',providerKeys:keys}).allowRepeatTopic,false);
+ assert.equal(validateInput({topic:'',allowRepeatTopic:true,voiceProvider:'fish',providerKeys:keys}).allowRepeatTopic,false);
+});

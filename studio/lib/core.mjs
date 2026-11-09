@@ -151,7 +151,7 @@ export async function api(url, init = {}, retries = 2) {
   }
 }
 
-export async function gemini(prompt, imagePath = null, {review=false,responseJsonSchema=null,debugPath=null}={}) {
+export async function gemini(prompt, imagePath = null, {review=false,responseJsonSchema=null,debugPath=null,maxAttempts=3,maxOutputTokens=null,timeoutMs=45000,fallbackRounds=3}={}) {
   const keys = [...new Set(['GEMINI_API_KEY', 'GEMINI_API_KEY_2', 'GEMINI_API_KEY_3']
     .map(providerValue).map(key => key.trim()).filter(Boolean))];
   if (!keys.length) throw Error('Gemini API keys missing in .env');
@@ -167,16 +167,16 @@ export async function gemini(prompt, imagePath = null, {review=false,responseJso
     parts.push({ inlineData: { mimeType, data: bytes.toString('base64') } });
   }
   let lastReason = 'empty response';
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const tunedParts = attempt ? [...parts, { text: '\nRETRY: Output one COMPLETE, compact JSON object. End with the final closing brace; no extra commentary or long prose.' }] : parts;
     const body = JSON.stringify({ contents: [{ parts: tunedParts }], generationConfig: {
         responseMimeType: 'application/json', temperature: attempt ? 0.45 : 0.65,
-        maxOutputTokens: attempt ? 14000 : 11000,
+        maxOutputTokens: maxOutputTokens ?? (attempt ? 14000 : 11000),
         ...(responseJsonSchema?{responseJsonSchema}:{}),
         ...(review&&/^gemini-3[.-]/.test(model)?{thinkingConfig:{thinkingLevel:'medium'}}:
           review&&/^gemini-2\.5-/.test(model)?{thinkingConfig:{thinkingBudget:1024}}:{}),
       } });
-    const data = await geminiWithFallback(model, body, keys);
+    const data = await geminiWithFallback(model, body, keys,{timeoutMs,fallbackRounds});
     const value = data.candidates?.[0]?.content?.parts?.filter(x=>x.thought!==true).map(x => x.text || '').join('') || '';
     const clean = value.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     try { if (clean) return JSON.parse(clean); } catch { /* Retry a truncated/malformed output. */ }
@@ -188,10 +188,10 @@ export async function gemini(prompt, imagePath = null, {review=false,responseJso
 
 // Rotate only for authentication, quota, timeout/network and server failures.
 // Malformed requests / unsupported models must not waste every backup key.
-async function geminiWithFallback(model, body, keys) {
+async function geminiWithFallback(model, body, keys,{timeoutMs=45000,fallbackRounds=3}={}) {
   const failures = [];
   let retryKeys=keys;
-  for(let round=0;round<3&&retryKeys.length;round++){
+  for(let round=0;round<fallbackRounds&&retryKeys.length;round++){
   if(round)await sleep(1000*2**(round-1));
   const remaining=new Set(retryKeys),temporary=[];
   while(remaining.size){
@@ -207,7 +207,7 @@ async function geminiWithFallback(model, body, keys) {
       if(context){context.usage.requests=(context.usage.requests||0)+1;}
       response = await generationFetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
-        body, signal: AbortSignal.timeout(45_000), redirect: 'error',
+        body, signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
       });
     } catch {
       checkGenerationCancelled();
@@ -760,7 +760,7 @@ export async function finalizeEpisode(initial,source,{requestedTopic=source.titl
 
 // Resolve context versus visible evidence BEFORE expensive media acquisition.
 export async function prepareMediaContracts(episode,source){
- const response=await gemini(`CONTEXTUAL MEDIA CONTRACT REVIEW. The spoken script is already fact-checked. Do not rewrite narration, claims, captions or timing. For each scene decide whether it explicitly demonstrates/points at an event happening on screen, or explains a general conditional/invisible fact. General diet, illness, taxonomy, economics or hidden mechanisms may use honest context of the EXACT named animal/object; do not require rare colour changes, sick animals, a historical reenactment or internal anatomy unless the narration actually asserts THIS SHOWN subject/action is evidence. For a conditional health/colour explanation, ordinary footage of that same species is honest context; never claim the filmed animal is sick. Preserve named species/object identity. Never replace a chocolate packet with groceries/vegetables or a named manuscript with a generic book. Never relax an explicitly pointed-at action or an actual comparison the viewer must see. For context footage of a hidden process, subjectEntity must be the concrete animal/object visible in visualQuery and videoQuery. Do not leave subjectEntity as blood cells, kidneys, molecules or brain when asking for ordinary whole-animal footage; the hidden process belongs only in narration, not the visible-subject requirement. Prefer the whole concrete subject over its hidden internal parts when narration explains an invisible mechanism: an ordinary alarm clock can contextualize an internal timing gear, and an ordinary animal can contextualize an internal organ. Do not demand a macro view of the part unless narration explicitly points it out or demonstrates it. Avoid unnecessary brand-specific screens or historical models when the narrated mechanism is general. IMPORTANT HISTORICAL CONTEXT: A spoken inventor name or invention date does not require an exact portrait, original patent, vintage box or archival machine. If the line is general historical narration and does NOT say this shown person/item/event is the actual inventor/original, prefer ordinary footage of the SAME TOPIC OBJECT as honest context. Set subjectEntity, visualQuery and videoQuery to that concrete topic object and changeToContext=true. Never claim modern context footage depicts the historical event; never relax an explicitly pointed-out original/portrait identity. Keep scene zero unchanged. Return JSON {"scenes":[{"index":1,"changeToContext":true,"shownActionRequired":false,"subjectEntity":"concrete exact subject, without unobservable inferred state","visualQuery":"2-4 English words","videoQuery":"2-4 English words","sourceQuote":"exact contiguous source excerpt supporting the general explanation","reason":"why this is context, not proof"}]}. Only suggest changes where that distinction is necessary. SOURCE:${String(source.extract||'').slice(0,12000)}\nSCENES:${JSON.stringify(episode.scenes.map((s,index)=>({index,factIndex:s.factIndex,narration:s.narration,subjectEntity:s.subjectEntity,visualRole:s.visualRole})))}`,null,{review:true,responseJsonSchema:{type:'object',required:['scenes'],properties:{scenes:{type:'array',maxItems:episode.scenes.length,items:{type:'object',properties:{index:{type:'integer'},changeToContext:{type:'boolean'},shownActionRequired:{type:'boolean'},subjectEntity:{type:'string'},visualQuery:{type:'string'},videoQuery:{type:'string'},sourceQuote:{type:'string'},reason:{type:'string'}},required:['index','changeToContext','shownActionRequired','subjectEntity','visualQuery','videoQuery','sourceQuote']}}}}});
+ const response=await gemini(`CONTEXTUAL MEDIA CONTRACT REVIEW. VIDEO TOPIC: ${JSON.stringify(episode.topic||source.title)}. CANONICAL SOURCE ENTITY: ${JSON.stringify(source.title)}. The spoken script is already fact-checked. Do not rewrite narration, claims, captions or timing. For each scene decide whether it explicitly demonstrates/points at an event happening on screen, or explains a general conditional/invisible fact. General diet, illness, taxonomy, economics or hidden mechanisms may use honest context of the EXACT named animal/object; do not require rare colour changes, sick animals, a historical reenactment or internal anatomy unless the narration actually asserts THIS SHOWN subject/action is evidence. For a conditional health/colour explanation, ordinary footage of that same species is honest context; never claim the filmed animal is sick. Preserve named species/object identity. Never replace a chocolate packet with groceries/vegetables or a named manuscript with a generic book. Never relax an explicitly pointed-at action or an actual comparison the viewer must see. For context footage of a hidden process, subjectEntity must be the concrete animal/object visible in visualQuery and videoQuery. Do not leave subjectEntity as blood cells, kidneys, molecules or brain when asking for ordinary whole-animal footage; the hidden process belongs only in narration, not the visible-subject requirement. Prefer the whole concrete subject over its hidden internal parts when narration explains an invisible mechanism: an ordinary alarm clock can contextualize an internal timing gear, and an ordinary animal can contextualize an internal organ. Do not demand a macro view of the part unless narration explicitly points it out or demonstrates it. Avoid unnecessary brand-specific screens or historical models when the narrated mechanism is general. IMPORTANT HISTORICAL CONTEXT: A spoken inventor name or invention date does not require an exact portrait, original patent, vintage box or archival machine. If the line is general historical narration and does NOT say this shown person/item/event is the actual inventor/original, prefer ordinary footage of the SAME TOPIC OBJECT as honest context. Set subjectEntity, visualQuery and videoQuery to that concrete topic object and changeToContext=true. Never claim modern context footage depicts the historical event; never relax an explicitly pointed-out original/portrait identity. NAMED-PLACE CONTEXT: If the topic is a specific natural landmark, glacier, lake or waterfall, keep establishing/ending scenery anchored to that exact place. For invisible chemistry, microbes or underground history at that place, prefer a verified exterior of the SAME named place as honest context instead of requesting unfilmable molecules, a specific bacterial species or an unrelated laboratory experiment. Do not use a generic polar landscape or another glacier merely because both have ice. Only request separate mechanism footage when it can honestly demonstrate that same mechanism. Keep scene zero unchanged. Return JSON {"scenes":[{"index":1,"changeToContext":true,"shownActionRequired":false,"subjectEntity":"concrete exact subject, without unobservable inferred state","visualQuery":"2-4 English words","videoQuery":"2-4 English words","sourceQuote":"exact contiguous source excerpt supporting the general explanation","reason":"why this is context, not proof"}]}. For a named geographic topic, you MUST replace abstract internal-place briefs such as subglacial microbes, ancient trapped water and hydrous ferric oxides with the exact named place as visible context unless the spoken line explicitly points at an actual demonstration. An evidence visualRole tag alone does not mean the spoken line claims visible evidence; judge the narration itself. Never leave an abstract internal process as subjectEntity with a generic glacier videoQuery. Return all necessary corrections in scenes; an empty scenes array is incorrect if such contradictions exist. SOURCE:${String(source.extract||'').slice(0,12000)}\nSCENES:${JSON.stringify(episode.scenes.map((s,index)=>({index,factIndex:s.factIndex,narration:s.narration,subjectEntity:s.subjectEntity,visualRole:s.visualRole,visualQuery:s.visualQuery,videoQuery:s.videoQuery,pointOut:s.pointOut,shownActionRequired:s.shownActionRequired})))}`,null,{review:true,responseJsonSchema:{type:'object',required:['scenes'],properties:{scenes:{type:'array',maxItems:episode.scenes.length,items:{type:'object',properties:{index:{type:'integer'},changeToContext:{type:'boolean'},shownActionRequired:{type:'boolean'},subjectEntity:{type:'string'},visualQuery:{type:'string'},videoQuery:{type:'string'},sourceQuote:{type:'string'},reason:{type:'string'}},required:['index','changeToContext','shownActionRequired','subjectEntity','visualQuery','videoQuery','sourceQuote']}}}}});
  if(!Array.isArray(response?.scenes))throw Error('Media contract review missing scene records');
  const norm=v=>String(v||'').normalize('NFC').replace(/\s+/gu,' ').trim().toLowerCase();
  const applied=[];
@@ -810,7 +810,7 @@ export function licenseInfo(metadata) {
 export async function commonsImage(query, dest, alreadyUsed = new Set(), {lookup=(key,operation)=>operation()}={}) {
   const url = new URL('https://commons.wikimedia.org/w/api.php');
   Object.entries({ action: 'query', generator: 'search', gsrsearch: brief(query, 90), gsrnamespace: '6',
-    gsrlimit: '16', prop: 'imageinfo', iiprop: 'url|extmetadata|size|mime', iiurlwidth: '1920', format: 'json' })
+    gsrlimit: '32', prop: 'imageinfo', iiprop: 'url|extmetadata|size|mime', iiurlwidth: '1920', format: 'json' })
     .forEach(([k, v]) => url.searchParams.set(k, v));
   const result = await lookup('commons:'+url,async()=>(await api(url,{timeoutMs:12_000},0)).json());
   // MediaWiki returns pages keyed by numeric page IDs; Object.values alone

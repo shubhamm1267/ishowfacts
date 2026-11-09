@@ -145,14 +145,15 @@ interface Health {
           <input id="channelLogo" type="file" accept="image/png,image/jpeg,image/webp" (change)="selectLogo($event)" [disabled]="working || logoLoading">
           <p class="config">Logo stays at the upper left below the yellow line, at 50% opacity, like the reference.</p>
           <div *ngIf="logoDataUrl" class="logo-preview"><img [src]="logoDataUrl" alt="Your channel logo preview" width="54" height="54" style="object-fit:contain"><button type="button" class="secondary" (click)="removeLogo()" [disabled]="working">REMOVE LOGO</button></div>
-          <label for="mediaMode">VISUAL MEDIA</label><select id="mediaMode" [(ngModel)]="mediaMode"><option value="mixed">Instagram first - stock/photo fallback</option><option *ngIf="visualStyle === 'paper'" value="photos">Photos only</option></select>
-          <p class="config" *ngIf="visualStyle === 'reference-news'">{{ mediaPlanLabel }} · clean cuts timed to narration; Instagram sources first.</p>
-          <p class="config">Local footage checks: title/tag matching, frame quality and duplicates. Exact subject/action recognition is not performed.</p>
+          <label for="mediaMode">VISUAL MEDIA</label><select id="mediaMode" [(ngModel)]="mediaMode"><option value="mixed">OmniDL first - Nexo / stock fallback</option><option *ngIf="visualStyle === 'paper'" value="photos">Photos only</option></select>
+          <p class="config" *ngIf="visualStyle === 'reference-news'">{{ mediaPlanLabel }} · clean cuts timed to narration; OmniDL ? Nexo ? Instagram ? stock sources.</p>
+          <p class="config">Footage checks: Gemini reviews sampled frames for subject/action relevance; local checks reject blank and duplicate footage.</p>
           <label for="voiceProvider">VOICE PROVIDER</label><select id="voiceProvider" [(ngModel)]="voiceProvider"><option value="fish">Fish Audio</option><option value="heygen">HeyGen · Yash</option><option value="cartesia">Cartesia</option></select>
           <label for="factMode">FACT SELECTION</label><select id="factMode" [(ngModel)]="factMode" (ngModelChange)="onFactModeChange()"><option value="topic">1 fact story · one topic</option><option value="random">3 facts · three different topics</option></select>
           <p class="config" *ngIf="factMode === 'random'">Three surprising topics, each researched separately. Desi hooks, quick reveals and light humor.</p>
           <label *ngIf="factMode === 'topic'" for="topic">YOUR TOPIC <span>OPTIONAL</span></label>
           <textarea *ngIf="factMode === 'topic'" id="topic" name="topic" [(ngModel)]="topic" rows="3" maxlength="140" placeholder="e.g. How do octopuses camouflage?\nOr leave blank for a surprise..."></textarea>
+          <label *ngIf="factMode === 'topic' && topic.trim()"><input id="allowRepeatTopic" type="checkbox" [(ngModel)]="allowRepeatTopic"> Regenerate this topic even if used before</label>
           <div class="selection-row">
             <div><label for="voiceAccent">NARRATION LANGUAGE / VOICE</label><select id="voiceAccent" [(ngModel)]="voiceAccent"><option value="hi-IN-anuj">{{voiceProvider === 'fish' ? 'Hindi - Fish Audio' : voiceProvider === 'heygen' ? 'Hindi · Yash' : 'Hindi · Anuj (expressive)'}}</option><option *ngIf="voiceProvider === 'cartesia'" value="hi-IN-ayush">Hindi · Ayush (bright)</option><option *ngIf="voiceProvider === 'cartesia'" value="hi-IN-rakesh">Hindi · Rakesh (narrator)</option><option *ngIf="voiceProvider === 'cartesia'" value="hi-IN">Hindi · Sagar (original)</option><option value="en-US">{{voiceProvider === 'fish' ? 'English - Fish Audio' : voiceProvider === 'heygen' ? 'English · HeyGen presenter' : 'English · US (Daniel)'}}</option><option *ngIf="voiceProvider === 'cartesia'" value="en-GB">English · UK (Archie)</option></select></div>
             <div><label for="seconds">LENGTH TARGET</label><select id="seconds" [(ngModel)]="seconds"><option [ngValue]="20">20 sec</option><option [ngValue]="25">25 sec</option><option [ngValue]="30">30 sec</option><option [ngValue]="35">35 sec</option><option [ngValue]="40">40 sec</option><option [ngValue]="50">50 sec</option><option [ngValue]="90">90 sec · 3 complete facts</option><option [ngValue]="100">100 sec · 3 complete facts</option></select></div>
@@ -228,6 +229,7 @@ export class AppComponent implements OnInit, OnDestroy {
   job: Job | null = null;
 
   topic = '';
+  allowRepeatTopic = false;
   factMode = 'topic';
   voiceAccent = 'hi-IN-anuj';
   voiceProvider = 'fish';
@@ -248,7 +250,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   get mediaPlanLabel(): string {
     const shots=this.seconds>50?Math.min(20,Math.ceil(this.seconds/5)):Math.max(6,Math.ceil(this.seconds/3.5));
-    return `${shots} shots · Instagram first, stock clips then images when needed`;
+    return `${shots} shots · OmniDL first, then Nexo and stock; HD clips or verified photos`;
   }
 
   error = '';
@@ -400,6 +402,7 @@ export class AppComponent implements OnInit, OnDestroy {
       '/api/jobs',
       {
         topic: this.topic,
+        allowRepeatTopic:this.factMode==='topic'&&this.allowRepeatTopic,
         previewFirst: !demo,
         recentTopics:this.recentTopics(),
         factMode: this.factMode,

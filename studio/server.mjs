@@ -19,13 +19,15 @@ import { spawn } from 'node:child_process';
 import { stockVideo,stockPhoto,createStockSession,createStockMediaCache,topicFootageAvailability,stockLookup,uploadDescription,moveCreditsToDescription } from './lib/stock-video.mjs';
 import {createInstagramProvider} from './lib/instagram-video.mjs';
 import {createNexoProvider} from './lib/nexo-video.mjs';
+import {createOmniProvider} from './lib/omni-video.mjs';
+import {footageChain} from './lib/footage-chain.mjs';
 import {usableVideoDimensions} from './lib/video-resolution.mjs';
 import { preparePointerAssets, prepareHeadlineAssets, prepareOverlayTextAssets, normalizeHookTitle } from './lib/reference-style.mjs';
 import { prepareExplainers } from './lib/explainer.mjs';
 import {heygenVoice,heygenPerformance,NATURAL_SPEECH_TRIM,DEFAULT_HEYGEN_VOICE,HEYGEN_FREE_MODEL,heygenModel,heygenSpeechMode,validateHeygenSettings} from './lib/heygen.mjs';
 import {recordStage,timingSummary} from './lib/job-timing.mjs';
 import {runSceneWorkers,mediaBudget,assignMediaTypes,mediaBudgetIssues,createProcessLimiter,resourceBudget} from './lib/media-workers.mjs';
-import {framingReviewer,reviewRenderedVideo} from './lib/local-visual-quality.mjs';
+import {framingReviewer,reviewRenderedVideo,createSemanticReviewer} from './lib/local-visual-quality.mjs';
 import {QualityError,narrationTempo} from './lib/quality.mjs';
 import {hookContextFor,hookFamily} from './lib/episode-prompt.mjs';
 
@@ -406,6 +408,7 @@ export function validateInput(data) {
     topic,
     recentTopics:[...new Set(recentTopics.map(t=>t.trim()))],
     previewFirst:data.previewFirst===true,
+    allowRepeatTopic:data.allowRepeatTopic===true&&Boolean(topic)&&data.factMode!=='random',
     language,
     factMode:data.factMode==='random'?'random':'topic',
     seconds,
@@ -911,7 +914,7 @@ async function runJob(job, input, approved = null) {
       for(let attempt=0;attempt<3;attempt++){
         const category=topicSelectionContext(topicHistory).categories[0];
         const candidate=input.topic||await chooseTopic({history:[...topicHistory,...attemptedTopics],language:input.language});
-        if(input.topic&&topicWasUsed(candidate,topicHistory))throw Error('This topic has already been used. Choose a new subject.');
+        if(input.topic&&!input.allowRepeatTopic&&topicWasUsed(candidate,topicHistory))throw Error('This topic has already been used. Choose a new subject.');
         await rememberSelection([candidate],[category]);
         let availability=null;
         if(!input.topic&&input.visualStyle==='reference-news'&&input.mediaMode==='mixed'){
@@ -921,8 +924,8 @@ async function runJob(job, input, approved = null) {
           if(availability.available===false)continue;
         }
         const researched={...await wikipediaSource(candidate),...(availability?.candidates?.length?{instagramCandidates:availability.candidates}:{})};
-        if(input.topic&&topicWasUsed(researched,topicHistory))throw Error('This topic has already been used. Choose a new subject; changing its title or language does not make it new.');
-        if(!topicWasUsed(researched,topicHistory)){
+        if(input.topic&&!input.allowRepeatTopic&&topicWasUsed(researched,topicHistory))throw Error('This topic has already been used. Choose a new subject; changing its title or language does not make it new.');
+        if(input.allowRepeatTopic||!topicWasUsed(researched,topicHistory)){
           topic=input.topic||researched.title;
           source={...researched,...(!input.topic?{category:topicSelectionContext(topicHistory).categories[0]}:{})};break;
         }
@@ -1037,9 +1040,10 @@ async function runJob(job, input, approved = null) {
       instagramCatalogue=[...index,...source.instagramCandidates];
     }
     const existingInstagram=createInstagramProvider({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,catalogue:instagramCatalogue});
-    const sourcePolicy={allowSourceText:true,allowStylized:true};
+    const sourcePolicy={allowSourceText:true,allowStylized:true,semanticVerification:true};
     const nexo=createNexoProvider({packageDirectory:process.env.NEXO_PACKAGE_DIR,run:processTool,sourcePolicy});
-    const instagram=nexo?async(...args)=>(await nexo(...args))||(await existingInstagram(...args)):existingInstagram;
+    const omni=createOmniProvider({run:processTool,root:ROOT,python:process.env.PYTHON||'python3'});
+    const instagram=footageChain([['OmniDL',omni],['Pinterest / Nexo',nexo],['Instagram',existingInstagram]]);
     const mediaLookup=(key,operation)=>stockLookup(stockSession,key,operation);
     // Stock searches begin only after the primary Instagram lookup falls back.
 
@@ -1105,7 +1109,17 @@ async function runJob(job, input, approved = null) {
     const usedImages = new Set();
     let videoCount = 0, videoReservations = 0, completedMedia = 0;
     const maxVideos = strictMedia?.videos||clamp(Number(process.env.STOCK_VIDEO_MAX_SCENES) || 3, 1, 6);
-    const verifyFraming=framingReviewer({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets,fit:input.mediaFit,sourcePolicy,
+    const visualReferences=new Map();
+    const referenceFor=key=>{
+      if(!visualReferences.has(key)){
+        const path=join(assets,`topic-reference-${visualReferences.size}.jpg`);
+        visualReferences.set(key,commonsImage(key,path,new Set(),{lookup:mediaLookup}).catch(error=>{
+          checkGenerationCancelled();job.warnings.push('Reference photo unavailable; candidate still requires explicit subject verification');return null;
+        }));
+      }
+      return visualReferences.get(key);
+    };
+    const verifyFraming=framingReviewer({run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets,fit:input.mediaFit,sourcePolicy,verifySemantic:createSemanticReviewer({generate:gemini,sourcePolicy,referenceFor}),
       onWarning:warning=>job.warnings.push(warning),
       onReject:({id,reason})=>{const scene=Number(/^(?:video|photo|still)-(\d+)/.exec(id)?.[1]);if(Number.isFinite(scene)){const message=`Scene ${scene+1}: visual rejected: ${reason}`;if(!job.warnings.includes(message))job.warnings.push(message);}}});
     let visualPass=0;
@@ -1125,7 +1139,7 @@ async function runJob(job, input, approved = null) {
           videoReservations++;
           try {
             const clip = await stockVideo(mediaVideoQuery(scene,sceneSource,topic), join(assets, `clip_${i}.mp4`), {
-              instagram,scene,topic,sourcePolicy,
+              instagram,scene,topic:sceneSource.title||topic,sourcePolicy,
               used: usedImages,
               session:stockSession,
               subject:scene.subjectEntity||sceneSource.title||topic,
@@ -1135,7 +1149,7 @@ async function runJob(job, input, approved = null) {
                 const probe = JSON.parse(await processTool('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
                   '-show_entries', 'stream=width,height:format=duration', '-of', 'json', media.file]));
                 const dimensions = probe.streams?.[0];
-                const social=['Instagram','Pinterest / Nexo'].includes(media.provider);
+                const social=['OmniDL','Instagram','Pinterest / Nexo'].includes(media.provider);
                 if (!usableVideoDimensions(dimensions?.width,dimensions?.height)) return null;
                 if(social&&Number(probe.format?.duration)<narration.timing[i].duration)return null;
                 const frames = join(assets, `clip_frames_${i}_${randomUUID()}`);
@@ -1144,7 +1158,7 @@ async function runJob(job, input, approved = null) {
                 const seconds = narration.timing[i].duration + .5;
                 // Review three frames first; rejected candidates never expand
                 // into hundreds of JPEGs or incur full frame-sequence work.
-                const reviewPoints=[.12,.5,.85];
+                const reviewPoints=[.02,.5,.95];
                 const focusImages=reviewPoints.map((_,index)=>join(frames,`review-${index}.jpg`));
                 // Decode once for all three review timestamps instead of
                 // launching three competing decoders for the same clip.
@@ -1152,7 +1166,7 @@ async function runJob(job, input, approved = null) {
                   ...reviewPoints.flatMap((fraction,index)=>[
                     '-ss',String(narration.timing[i].duration*fraction),'-frames:v','1','-an',
                     '-vf',"scale='min(960,iw)':'min(960,ih)':force_original_aspect_ratio=decrease",focusImages[index]])]);
-                const framing=await verifyFraming(focusImages,scene,topic,`video-${i}-${visualPass}-${randomUUID()}`,media);
+                const framing=await verifyFraming(focusImages,scene,sceneSource.title||topic,`video-${i}-${visualPass}-${randomUUID()}`,media);
                 if(!framing)return null;
                 const focus=[];
                 if(scene.pointOut)job.warnings.push(`Scene ${i+1}: exact pointer target is not located by local technical checks; pointer omitted`);
@@ -1248,7 +1262,7 @@ async function runJob(job, input, approved = null) {
             // The same stock provider also supplies licensed photos, which
             // avoids relying exclusively on Commons/Openverse after clip rejection.
             const tryStockPhoto=async()=>{
-              try{return await stockPhoto(search,dest,{used:usedImages,session:stockSession});}
+              try{return await stockPhoto(search,dest,{used:usedImages,session:stockSession,scene,topic,sourcePolicy});}
               catch(e){job.warnings.push(`Scene ${i+1}: stock photo search unavailable (${e.message})`);return null;}
             };
             if(attempt%2===0)media=await tryStockPhoto();
@@ -1287,7 +1301,13 @@ async function runJob(job, input, approved = null) {
             let guidance = null;
 
             try {
-              guidance=await verifyFraming([dest],scene,topic,`photo-${i}-${visualPass}-${attempt}`,media);
+              guidance=await verifyFraming([dest],scene,sceneSource.title||topic,`photo-${i}-${visualPass}-${attempt}`,media);
+              if(!guidance&&String(media.id||'').startsWith('pexels-photo:')){
+                // A downloaded but irrelevant stock photo must not consume the
+                // only attempt at an exact Commons result for the same query.
+                const exact=await commonsImage(search,dest,usedImages,{lookup:mediaLookup}).catch(error=>{checkGenerationCancelled();return null;});
+                if(exact){media=exact;usedImages.add(media.title);guidance=await verifyFraming([dest],scene,sceneSource.title||topic,`photo-${i}-${visualPass}-${attempt}-commons`,media);}
+              }
               if(!guidance)continue;
             } catch(e) {
               job.warnings.push(`Scene ${i+1}: local image inspection unavailable: ${e.message}`);
@@ -1358,7 +1378,7 @@ async function runJob(job, input, approved = null) {
           // a static JPEG, never an extra moving-video scene or a reused clip.
           if(!selected&&strictMedia&&visualPass>0){
             const stillSource=await stockVideo(mediaVideoQuery(scene,sceneSource,topic),join(assets,`photo_source_${i}.mp4`),{
-              instagram,scene,topic,sourcePolicy,
+              instagram,scene,topic:sceneSource.title||topic,sourcePolicy,
               used:usedImages,subject:scene.subjectEntity||sceneSource.title||topic,session:stockSession,creditPlacement:'description',
               inspect:async media=>{
                 const probe=JSON.parse(await processTool('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height:format=duration','-of','json',media.file]));
@@ -1366,7 +1386,7 @@ async function runJob(job, input, approved = null) {
                 if(!usableVideoDimensions(dimensions?.width,dimensions?.height))return null;
                 const stillAt=Math.min(1,Number(probe.format?.duration)/2||.5);
                 await processTool('ffmpeg',['-v','error','-y','-ss',String(stillAt),'-i',media.file,'-frames:v','1','-an','-q:v','2',dest]);
-                const framing=await verifyFraming([dest],scene,topic,`still-${i}-${randomUUID()}`,media);
+                const framing=await verifyFraming([dest],scene,sceneSource.title||topic,`still-${i}-${randomUUID()}`,media);
                 return framing?{...framing,width:dimensions.width,height:dimensions.height,stillAt}:null;
               }
             });
@@ -1746,9 +1766,10 @@ async function runJob(job, input, approved = null) {
       }
       await checkpoint(job,'Checking exported frames in one FFmpeg pass and OpenCV',99);
       const finalReview=await reviewRenderedVideo(plan,episode,{run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets});
+      const visualReports=await Promise.all(images.map(async image=>image?.visualReview?JSON.parse(await readFile(join(image.visualReview,'local-review.json'),'utf8')):null));
       await writeFile(join(folder,'quality-report.json'),JSON.stringify({
-        approved:finalReview.approved,visualVerification:'local-technical-and-metadata',semanticIdentityChecked:false,mediaBudget:strictMedia,editorial:'editorial-review.json',audio:'audio-review.json',
-        visuals:images.map((image,index)=>({index,review:image?.visualReview||null,fit:image?.mediaFit,subjectFocus:image?.subjectFocus})),finalReview
+        approved:finalReview.approved,visualVerification:'local-technical-and-gemini',semanticIdentityChecked:visualReports.length>0&&visualReports.every(report=>report?.approved&&report?.semanticIdentityChecked),mediaBudget:strictMedia,editorial:'editorial-review.json',audio:'audio-review.json',
+        visuals:images.map((image,index)=>({index,review:image?.visualReview||null,fit:image?.mediaFit,subjectFocus:image?.subjectFocus,semantic:visualReports[index]?.semantic||null})),finalReview
       },null,2));
       if(!finalReview.approved)throw new QualityError('Final video quality review did not pass: '+finalReview.issues.join('; ').slice(0,700),finalReview.issues,finalReview.indices);
     }

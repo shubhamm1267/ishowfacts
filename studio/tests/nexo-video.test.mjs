@@ -42,7 +42,7 @@ test('fragmented MP4 HLS honors initialization and segment byte ranges',async()=
 
 test('alternate query is tried before fallback and rejected clips are released',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'nexo-search-')),queries=[],used=new Set();
- const pin={is_video:true,video_url:'https://v1.pinimg.com/a.m3u8',title:'banana plant',pin_url:'https://www.pinterest.com/pin/123/',videos:{list:{low:{width:360,height:640}}}};
+ const pin={is_video:true,video_url:'https://v1.pinimg.com/a.m3u8',title:'banana plant',pin_url:'https://www.pinterest.com/pin/123/',videos:{list:{low:{width:720,height:1280}}}};
  const provider=createNexoProvider({search:async q=>{queries.push(q);return {status:true,data:{pins:q.startsWith('rare')?[]:[pin]}};},download:async()=>{}});
  const session={metrics:{searches:[]}};
  try{
@@ -60,7 +60,7 @@ test('later scenes retain Pinterest retrieval budget after slow CPU inspection',
  let clock=0,calls=0;const dir=await mkdtemp(join(tmpdir(),'nexo-cpu-budget-'));
  const session={metrics:{searches:[]}},used=new Set();
  const provider=createNexoProvider({now:()=>clock,budgetMs:20,lookupMs:10,
-  search:async q=>{clock+=2;calls++;const subject=q.replace(' video','');return {status:true,data:{pins:[{is_video:true,title:subject,video_url:`https://v1.pinimg.com/${subject}.m3u8`,pin_url:'https://www.pinterest.com/pin/123/',videos:{list:{low:{width:360,height:640}}}}]}};},
+  search:async q=>{clock+=2;calls++;const subject=q.replace(' video','');return {status:true,data:{pins:[{is_video:true,title:subject,video_url:`https://v1.pinimg.com/${subject}.m3u8`,pin_url:'https://www.pinterest.com/pin/123/',videos:{list:{low:{width:720,height:1280}}}}]}};},
   download:async()=>{clock+=2;}});
  try{
   for(const subject of ['banana','sloth']){
