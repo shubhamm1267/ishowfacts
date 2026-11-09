@@ -67,3 +67,17 @@ test('final export checks require video/audio/duration and all expected frame re
   await assert.rejects(checkFrames(['a','b'],{run,python,root}),/Incomplete local/);
  }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('final review samples all scenes in a single real FFmpeg decode',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'one-pass-export-'));
+ try{
+  const file=join(folder,'film.mp4');
+  await run('ffmpeg',['-v','error','-y','-f','lavfi','-i','testsrc2=size=160x240:rate=24:duration=2',
+   '-f','lavfi','-i','sine=frequency=440:duration=2','-c:v','libx264','-preset','ultrafast','-threads','1','-c:a','aac','-shortest',file]);
+  let decodes=0;
+  const measured=async(command,args,...rest)=>{if(command==='ffmpeg'){decodes++;assert.ok(args.includes('-fps_mode'));assert.match(args[args.indexOf('-vf')+1],/select=/);}return run(command,args,...rest);};
+  const plan={meta:{out:file,duration:2,size:[160,240],fps:24},scenes:[{start:0,reference_media:{media_type:'video'}},{start:1,reference_media:{media_type:'video'}}]};
+  const result=await reviewRenderedVideo(plan,{}, {run:measured,python,root,assets:folder});
+  assert.equal(decodes,1);assert.equal(result.approved,true,JSON.stringify(result.issues));assert.equal(result.framesChecked,6);
+ }finally{await rm(folder,{recursive:true,force:true});}
+});

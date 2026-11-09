@@ -2359,6 +2359,12 @@ class Reel:
     def render(self):
         self.out.parent.mkdir(parents=True, exist_ok=True)
         silent = self.out.with_name("_paperdoc_video.mp4")
+        from reference_render import render_reference
+        if render_reference(self, W, H, FPS, silent, run_hidden, popen_hidden):
+            self.mux(silent)
+            silent.unlink()
+            print("done ->", self.out)
+            return
         output_size = self.meta.get("output_size", [W, H])
         ow, oh = map(int, output_size)
         if ow < W or oh < H or ow % 2 or oh % 2:

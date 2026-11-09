@@ -75,8 +75,14 @@ export async function reviewRenderedVideo(plan,episode,{run,python='python3',roo
   return (scene.reference_media?.media_type==='video'?[.15,.5,.85]:[.5]).map(fraction=>({index,time:scene.start+(end-scene.start)*fraction,path:join(folder,`scene-${index}-${fraction}.jpg`)}));
  });
  if(!frames.length)issues.push('Export has no scene frames to check');
- // Bounded batches avoid one process per frame and dozens of encoders at once.
- for(let offset=0;offset<frames.length;offset+=6)await run('ffmpeg',['-v','error','-y','-i',plan.meta.out,...frames.slice(offset,offset+6).flatMap(f=>['-ss',String(f.time),'-frames:v','1','-an','-vf','scale=640:640:force_original_aspect_ratio=decrease','-q:v','3','-threads','1',f.path])]);
+ // Select all review frames in one decode, instead of decoding from the start
+ // once for each output timestamp. Duplicate timestamps share the same JPEG.
+ const fps=Number(plan.meta.fps)||24;
+ const samples=[...new Set(frames.map(f=>Math.max(0,Math.floor(f.time*fps))))].sort((a,b)=>a-b);
+ for(const frame of frames)frame.path=join(folder,`review-${String(samples.indexOf(Math.max(0,Math.floor(frame.time*fps)))).padStart(4,'0')}.jpg`);
+ if(samples.length)await run('ffmpeg',['-v','error','-y','-i',plan.meta.out,'-an',
+  '-vf',`select='${samples.map(n=>`eq(n,${n})`).join('+')}',scale=640:640:force_original_aspect_ratio=decrease`,
+  '-fps_mode','vfr','-frames:v',String(samples.length),'-start_number','0','-q:v','3','-threads','1',join(folder,'review-%04d.jpg')],null,{timeoutMs:Math.max(120000,plan.meta.duration*4000)});
  const report=frames.length?await checkFrames(frames.map(f=>f.path),{run,python,root,source:false}):{frames:[],warnings:[]};
  report.frames.forEach((f,i)=>{if(!f.approved){indices.push(frames[i].index);issues.push(`Scene ${frames[i].index+1}: ${f.issues.join('; ')}`);}});
  const result={approved:issues.length===0,issues,indices:[...new Set(indices)],framesChecked:frames.length,

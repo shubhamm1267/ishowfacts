@@ -1149,13 +1149,13 @@ async function runJob(job, input, approved = null) {
                 await processTool('ffmpeg',['-v','error','-y',...(social?[]:['-stream_loop','-1']),'-i',media.file,
                   ...reviewPoints.flatMap((fraction,index)=>[
                     '-ss',String(narration.timing[i].duration*fraction),'-frames:v','1','-an',
-                    '-vf','scale=960:960:force_original_aspect_ratio=decrease',focusImages[index]])]);
+                    '-vf',"scale='min(960,iw)':'min(960,ih)':force_original_aspect_ratio=decrease",focusImages[index]])]);
                 const framing=await verifyFraming(focusImages,scene,topic,`video-${i}-${visualPass}-${randomUUID()}`,media);
                 if(!framing)return null;
                 const focus=[];
                 if(scene.pointOut)job.warnings.push(`Scene ${i+1}: exact pointer target is not located by local technical checks; pointer omitted`);
                 await processTool('ffmpeg', ['-v', 'error', '-y', ...(social?[]:['-stream_loop','-1']), '-i', media.file,
-                  '-t', String(seconds), '-an', '-vf', `fps=${fps},scale=1920:1920:force_original_aspect_ratio=decrease`,
+                  '-t', String(seconds), '-an', '-vf', `fps=${fps},scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease`,
                   '-start_number', '0', join(frames, '%06d.jpg')]);
                 const files=(await readdir(frames)).filter(n=>/^\d{6}\.jpg$/.test(n));
                 if(files.length<2)return null;
@@ -1733,13 +1733,15 @@ async function runJob(job, input, approved = null) {
     }
 
     if(!input.demo&&input.visualStyle==='reference-news'){
-      await checkpoint(job,'Checking exported video with local FFmpeg and OpenCV',98);
       if(['hi','en'].includes(input.language)){
+        await checkpoint(job,'Extracting exported voice for final check',98);
         const masteredVoice=join(assets,'exported-narration.wav');
         await processTool('ffmpeg',['-v','error','-y','-i',output,'-vn','-ac','1','-ar','24000',masteredVoice]);
+        await checkpoint(job,'Reviewing exported voice with Gemini',98);
         const review=await auditHindiNarration(masteredVoice,episode,{requireNatural:true});
         await writeFile(join(folder,'final-audio-review.json'),JSON.stringify(review,null,2));
       }
+      await checkpoint(job,'Checking exported frames in one FFmpeg pass and OpenCV',99);
       const finalReview=await reviewRenderedVideo(plan,episode,{run:processTool,python:process.env.PYTHON||'python3',root:ROOT,assets});
       await writeFile(join(folder,'quality-report.json'),JSON.stringify({
         approved:finalReview.approved,visualVerification:'local-technical-and-metadata',semanticIdentityChecked:false,mediaBudget:strictMedia,editorial:'editorial-review.json',audio:'audio-review.json',
